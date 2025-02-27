@@ -1,3 +1,7 @@
+from args import args_parser
+global args
+args = args_parser()
+
 import os
 import requests
 import torch
@@ -7,7 +11,7 @@ import numpy as np
 import threading
 import pickle
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from ResNet9_BN2D import *
+# from ResNet9_BN2D import *
 # from model import *
 # from ResNet18_BN2D import *
 # from v2HomomorphicEncryption import * 
@@ -28,7 +32,6 @@ import itertools ##
 import string
 from datetime import datetime
 
-from config import config
 import logging 
 import asyncio
 import uvicorn
@@ -37,14 +40,46 @@ from fastapi.responses import JSONResponse
 import httpx
 # log = logging.getLogger('werkzeug')
 # log.disabled = True # disable restapi logging
+import psutil
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import utils.model
+from utils.model import batch_learning_model
+from Batch_Data_Learning.custom_batch_norm import *
+
+# from args import args_parser
+# global args
+# args = args_parser()
 
 context2 = None
+basePort = args.start_port
+glb_model = batch_learning_model[args.dataset].to(device)
 
-sm_count = torch.cuda.get_device_properties(0).multi_processor_count
-print(f"Number of SMs: {sm_count}")
-basePort = config['RestAPI']['ServerPort']
-import psutil
+max_lr = 0.001
+optimizer = optim.Adam(glb_model.parameters(), max_lr, weight_decay=0.001)  
+lr_schedl = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr, epochs=30, steps_per_epoch=int(50000/400))
 
+# Shared variable to accumulate tensors
+overallBatchSum = []
+overallBatchStdv = []
+batchMean = None
+batchVar = None
+overallTerm2 = []
+overallPartTerm3 = []
+batchTerm2 = None
+batchPartTerm3 = None
+totalAssignedClientsInBatch = 0
+
+batchNormLayersBM = [] # use to store all the batch norm layers of glb_model for updating running batch mean & var usage
+batchNormLayersVAR = []
+
+# a threading event to signal when the local batch statistic received from all participating client
+batchMean_ready_event = asyncio.Event()
+batchVar_ready_event = asyncio.Event()
+batchTerm2_ready_event = asyncio.Event()
+batchPartTerm3_ready_event = asyncio.Event()
+
+clientsCountTracker = 0
 
 def set_cpu_affinity(core_ids):
     """
@@ -122,41 +157,11 @@ def init(sums, clientsAvailPlaceholderTargets):
     
     return targets, mappedClientAssignedForPlaceholder
 
-glb_model = ResNet9(3, 100).to(device)
-# glb_model = CovtypeNN().to(device)
-# glb_model = resnet18.to(device)
-max_lr = 0.001
-optimizer = optim.Adam(glb_model.parameters(), max_lr, weight_decay=0.001)  
-lr_schedl = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr, epochs=30, steps_per_epoch=int(50000/400))
-
-# Shared variable to accumulate tensors
-overallBatchSum = []
-overallBatchStdv = []
-batchMean = None
-batchVar = None
-overallTerm2 = []
-overallPartTerm3 = []
-batchTerm2 = None
-batchPartTerm3 = None
-totalAssignedClientsInBatch = 0
-
-batchNormLayersBM = [] # use to store all the batch norm layers of glb_model for updating running batch mean & var usage
-batchNormLayersVAR = []
-
-# a threading event to signal when the received data to accumulate reach N length
-# batchMean_ready_event = asyncio.Event()
-batchMean_ready_event = asyncio.Event()
-batchVar_ready_event = asyncio.Event()
-batchTerm2_ready_event = asyncio.Event()
-batchPartTerm3_ready_event = asyncio.Event()
-
-clientsCountTracker = 0
 
 @app.get('/get_glb_params')
 async def get_glb_params():
     model_params = pickle.dumps(glb_model.state_dict())
     return Response(model_params, media_type='application/octet-stream')
-
 
 
 @app.post('/computeBatchMean')
@@ -531,7 +536,7 @@ async def start_federated_learning(basePort):
     
     epochs = 30
     batchSize = 400
-    clients = list(range(1, config['NonIIDSetup']['totalClient'] + 1)) ## # replace range with actual clients address in production environment
+    clients = list(range(1, args.client_num + 1)) ## # replace range with actual clients address in production environment
     
     send_generateEncryptContext_request(clients) ##
 
@@ -557,7 +562,7 @@ async def start_federated_learning(basePort):
 
     # os.kill(os.getpid(), signal.SIGTERM)
     
-    resultFilePath = config['Logging']['ResultFile']
+    resultFilePath = args.resultFilePath
     start_time = datetime.now()
     # with open(resultFilePath, 'a') as file:
     #     file.write(f"Training Start Time: {start_time}\n")
@@ -711,7 +716,7 @@ async def start_federated_learning(basePort):
         # if epoch % 5 == 0:
     model_params = pickle.dumps(glb_model.state_dict())
     # Save the serialized model parameters to a file in the current directory
-    with open(f"/home/user/huiyeok/embraceNonIID_S2/CIFAR-100/Solution2/ModelExp/modelParams-classHold{config['NonIIDSetup']['labelPerClientHold']}-alpha{config['NonIIDSetup']['alpha']}-client{config['NonIIDSetup']['totalClient']}.pkl", 'wb') as f:
+    with open(f"/home/user/huiyeok/embraceNonIID_S2/CIFAR-100/Solution2/ModelExp/modelParams-classHold{args.labelOrDomainPerClientHold}-alpha{args.dirichlet}-client{args.client_num}.pkl", 'wb') as f:
         f.write(model_params)
             
         
@@ -724,12 +729,12 @@ async def start_federated_learning(basePort):
 
 
 async def begin():
-    basePort = config['RestAPI']['ServerPort']
+    basePort = args.start_port
     
     pid = os.getpid()
     process = psutil.Process(pid)
     current_affinity = process.cpu_affinity()
-    process.cpu_affinity(current_affinity[config['NonIIDSetup']['totalClient']:]) 
+    process.cpu_affinity(current_affinity[args.client_num:]) 
 
     print(os.system('taskset -cp %s' %os.getpid())) 
     

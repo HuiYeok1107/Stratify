@@ -1,3 +1,7 @@
+from args import args_parser
+global args
+args = args_parser()
+
 import torch.multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
@@ -6,14 +10,9 @@ from fastapi import FastAPI, Response,  File, UploadFile
 
 import tenseal as ts
 
+
 import torch
 import torch.nn as nn
-import torch.optim as optim
-# import torchvision
-# import torchvision.transforms as transforms
-from torchvision import models
-import torch.nn.functional as F
-# from PIL import Image
 
 import numpy as np
 import pandas as pd
@@ -23,7 +22,6 @@ import time
 from collections import Counter
 from itertools import islice
 import signal
-# import io
 import logging 
 import os
 import psutil
@@ -34,13 +32,14 @@ import psutil
 # from model import *
 
 # # # # # # # # # #
+from torch.utils.data import DataLoader, TensorDataset
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utils.data import dataset_train_test, dataset_transform
+from utils.data import dataset_train_test, dataset_transform, datasets_labels_count
 from utils.nonIIDPartition import *
-from args import args_parser
-global args
-args = args_parser()
+import utils.model
+from utils.model import *
+
 
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -52,17 +51,13 @@ torch.set_num_threads(1)
 
 context = None
 PlaceholderMaptoRealTarget = None ##
-# create local model
-# model = ResNet9(3, 100)
-# model = CovtypeNN()
-# model = resnet18
-# print(f'model: {model}')
+# initialise local model
+local_model = ResNet9(3, 10)
+
 criterion = nn.CrossEntropyLoss(reduction='sum')
 device = torch.device('cuda')
 
 batchSize = 0
-epoch_total_correct = 0 # to remove
-epoch_total_samples = 0 # to remove
 train_losses = 0
 train_labels = []
 train_preds = []
@@ -250,38 +245,41 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
 
     @app.post('/test')
     async def test():
-        global model, epoch_total_correct, epoch_total_samples,  train_losses, train_labels, train_preds
-
-        glbModelParam = pickle.loads(requests.get(f'http://127.0.0.1:{base_port - 1}/get_glb_params').content)
-        model.load_state_dict(glbModelParam)
-        model.eval()
-        
+        global local_model, epoch_total_correct, epoch_total_samples,  train_losses, train_labels, train_preds
         test_losses = 0
         test_labels = []
         test_preds = []
 
+        glbModelParam = pickle.loads(requests.get(f'http://127.0.0.1:{base_port - 1}/get_glb_params').content)
+        local_model.load_state_dict(glbModelParam)
+        local_model.eval()
+
+        inputs = torch.stack(testData['image'].tolist()).float()
+        labels = torch.tensor(testData['label'].values)
+        
+        # inputs = torch.from_numpy(testData.drop(columns=['labels']).values).float()
+        # labels = torch.from_numpy(testData['labels'].values).long()
+
+        test_loader = DataLoader(TensorDataset(inputs, labels), batch_size=128, shuffle=False)
         with torch.no_grad():
-            inputs = torch.stack(testData['image'].tolist()).float().to(device)
-            labels = torch.tensor(testData['label'].values).to(device)
-            
-            # inputs = torch.from_numpy(testData.drop(columns=['labels']).values).to(device).float()
-            # labels = torch.from_numpy(testData['labels'].values).long().to(device)
-            preds = model(inputs)
+            for inputs, labels in test_loader:
+                inputs, labels = inputs.to(device), labels.to(device)
+                preds = local_model(inputs)
 
-            _, predicted = preds.max(1)
-            total = labels.size(0)
-            correct = predicted.eq(labels).sum().item()
-            # print(total)
-            # print(correct)
-            
-            test_losses += criterion(preds, labels).item()
-            test_labels.extend(labels.tolist())
-            test_preds.extend(predicted.tolist())
-            
-        conf_matrix, correct_per_class, total_per_class,  ba_per_class, f1_per_class, normal_accuracy, macro_avg_f1, weighted_f1, macro_avg_ba_allclasses, weighted_ba = model_performance(train_labels, train_preds, config['NonIIDSetup']['totalLabels']) ###  TOTAL CLASS    
-        test_conf_matrix, test_correct_per_class, test_total_per_class,  test_ba_per_class, test_f1_per_class, test_normal_accuracy, test_macro_avg_f1, test_weighted_f1, test_macro_avg_ba_allclasses, test_weighted_ba = model_performance(test_labels, test_preds, config['NonIIDSetup']['totalLabels']) ###  TOTAL CLASS    
+                _, predicted = preds.max(1)
+                total = labels.size(0)
+                correct = predicted.eq(labels).sum().item()
+                # print(total)
+                # print(correct)
+                
+                test_losses += criterion(preds, labels).item()
+                test_labels.extend(labels.tolist())
+                test_preds.extend(predicted.tolist())
+        
 
-       
+        
+        conf_matrix, correct_per_class, total_per_class,  ba_per_class, f1_per_class, normal_accuracy, macro_avg_f1, weighted_f1, macro_avg_ba_allclasses, weighted_ba = model_performance(train_labels, train_preds, datasets_labels_count[args.dataset])    
+        test_conf_matrix, test_correct_per_class, test_total_per_class,  test_ba_per_class, test_f1_per_class, test_normal_accuracy, test_macro_avg_f1, test_weighted_f1, test_macro_avg_ba_allclasses, test_weighted_ba = model_performance(test_labels, test_preds, datasets_labels_count[args.dataset])  
         
         conf_matrix = list([[int(value) for value in row] for row in conf_matrix.tolist()])
         test_conf_matrix = list([[int(value) for value in row] for row in test_conf_matrix.tolist()])
@@ -315,7 +313,7 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
                                   
     @app.post('/train')
     async def train(to_train: UploadFile = File(...), glb_model_params: UploadFile = File(...), batch_size: UploadFile = File(...)):
-        global model, criterion, batchSize, epoch_total_correct, epoch_total_samples, PlaceholderMaptoRealTarget, train_losses, train_labels, train_preds
+        global local_model, criterion, batchSize, epoch_total_correct, epoch_total_samples, PlaceholderMaptoRealTarget, train_losses, train_labels, train_preds
         # print('in clinet train func')
         # Extract placeholders to train and global model parameters from server
         serializ_to_train = await to_train.read()
@@ -329,16 +327,16 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
 
 
         batchSize = pickle.loads(await batch_size.read())
-        ResNet9_BN2D.batchSize = batchSize
+        utils.model.batchSize = batchSize # set the batch size in client's model architecture file for custom batch normalisation usage
         # ResNet18_BN2D.batchSize = batchSize
         
         placeMap2RealLabel = PlaceholderMaptoRealTarget ##
         # placeMap2RealLabel = pickle.loads(request.files['PlaceholderMaptoRealTarget'].read()) #####################new mapping code
 
         # forward and backward pass to accumulate local gradients summed
-        model.load_state_dict(glb_model_params)
-        model = model.to(device)
-        model.train()
+        local_model.load_state_dict(glb_model_params)
+        local_model = local_model.to(device)
+        local_model.train()
         
         samples = []
         for p, count in Counter(to_train).items():
@@ -356,7 +354,7 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         
         # stream = torch.cuda.Stream()
         # with torch.cuda.stream(stream):
-        outputs = model(inputs)
+        outputs = local_model(inputs)
         loss = criterion(outputs, labels)
         
         _, predicted = torch.max(outputs, 1)
@@ -367,7 +365,7 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         train_losses += loss.item()
     
 
-        grad = torch.autograd.grad(loss, model.parameters(), retain_graph=True)
+        grad = torch.autograd.grad(loss, local_model.parameters(), retain_graph=True)
         
         # stream.synchronize()
         serialz_grad = pickle.dumps(grad)
@@ -393,10 +391,9 @@ def start_training_process(base_port, rank, port, clientTrainData, clientTestDat
 
     print(os.system('taskset -cp %s' %os.getpid()))
     create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, clientTrainLabelDataCount)
-    
+
 
 if __name__ == "__main__":
-    
     total_clients = args.client_num # total clients
     base_port = args.start_port + 1 # Client starting port (server port + 1)
     labelOrDomain_per_client = args.labelOrDomainPerClientHold

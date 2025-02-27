@@ -3,7 +3,7 @@ from datasets import load_dataset
 import torchvision.transforms as transforms
 from torchvision import datasets
 from PIL import Image
-import deeplake
+# import deeplake
 import numpy as np
 import pandas as pd
 import gdown
@@ -11,6 +11,17 @@ import zipfile
 import pickle
 import io
 import os
+import tensorflow as tf
+
+
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print("Enabled GPU memory growth.")
+    except RuntimeError as e:
+        print(e)
 
 def get_mnist_df():
     data = tfds.load('mnist', split='train')
@@ -37,7 +48,7 @@ def transform_mnist(img, train=False, augment=False):
 def get_cifar10_df():
     data = tfds.load('cifar10', split='train')
     traindf = tfds.as_dataframe(data)
-    
+    traindf = traindf.sample(frac=0.1)
     data = tfds.load('cifar10', split='test')
     testdf = tfds.as_dataframe(data)
     # testdf = testdf.rename(columns={"image": "images", "label": "labels"})
@@ -232,6 +243,17 @@ def transform_digitDG(img, train=False, augment=False):
     transformed_img = transform(img)
     return transformed_img
         
+
+
+datasets_labels_count = {
+    "mnist": 10,
+    "cifar10": 10,
+    "cifar100": 100,
+    "tinyimagenet": 200,
+    "covtype": 2,
+    "pacs": 7,
+    "digitdg": 10
+}
 
 dataset_train_test = {
     "mnist": get_mnist_df,
