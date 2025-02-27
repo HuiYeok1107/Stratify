@@ -29,6 +29,7 @@ from utils.data import dataset_train_test, dataset_transform, datasets_labels_co
 from utils.nonIIDPartition import *
 import utils.model
 from utils.model import batch_learning_model
+from utils.model_metrics import model_performance
 
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -70,7 +71,6 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
 
             for future in as_completed(futures):
                 response = future.result()
-                # print(response.json())
 
         return Response(serverSerialzContext, media_type='application/octet-stream')
     
@@ -79,7 +79,6 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
     async def receive_EncryptionContext(serialized_client_context: UploadFile = File(...)):
         global context
         context = ts.context_from(await serialized_client_context.read(), n_threads=2)
-        # print(context)
         return {"message": "received context"}
     
 
@@ -89,8 +88,6 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         encComparisonValue = ts.ckks_vector_from(context, pickle.loads(await enc_comparison_val.read()))
         placeh_mapping_stage = await placeholder_to_target_mapping_stage.read()
         comparisonValue = encComparisonValue.decrypt()
-        print(f'comparision value: {comparisonValue}')
-        print(f'placeh mapping stage: {placeh_mapping_stage}')
         # set comparison value as 0 or 1 during placeholder mapping stage to avoid malicious server from using the minus result to infer the real label client holds
         if placeh_mapping_stage.decode() == 'True':
             if abs(comparisonValue[0]) < 1e-5: 
@@ -115,7 +112,7 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         global context, PlaceholderMaptoRealTarget
         serialized_mapping = pickle.loads(await mapping.read())
         PlaceholderMaptoRealTarget = {placeholder: round(ts.ckks_vector_from(context, encRealLabel).decrypt()[0]) for placeholder, encRealLabel in serialized_mapping.items()}
-        print(f'port {port} placeholderMapReal: {PlaceholderMaptoRealTarget}')
+        # print(f'port {port} placeholderMapReal: {PlaceholderMaptoRealTarget}')
         return {'message': "received placeholder to real label maps"}
     
 
@@ -138,72 +135,24 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
 
     def prepare_testData():
         testData['image'] = testData['image'].apply(lambda img: dataset_transform[args.dataset](img, train=False, augment=False))
-        
-    
-    def model_performance(labels, preds, totalTargetClass):
-        conf_matrix = np.zeros((totalTargetClass, totalTargetClass), dtype=int)
-        for pred, label in zip(preds, labels):
-            conf_matrix[label, pred] += 1
-    
-        f1_per_class = []
-        ba_per_class = []
-        correct_per_class = []
-        total_per_class = []
-    
-        # Calculate metrics for each class
-        for i in range(conf_matrix.shape[0]):
-            if conf_matrix[i, :].sum() != 0: # excluded metrics calculation for class that a client does not hold
-                TP = conf_matrix[i, i]  
-                FP = conf_matrix[:, i].sum() - TP  
-                FN = conf_matrix[i, :].sum() - TP  
-                TN = conf_matrix.sum() - (TP + FP + FN)  
-                
-                precision = TP / (TP + FP) if (TP + FP) > 0 else 0.0 
-                recall = TP / (TP + FN) if (TP + FN) > 0 else 0.0
-                specificity = TN / (TN + FP) if (TN + FP) > 0 else 0.0
- 
-                balanced_acc = (recall + specificity) / 2
-                f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-    
-                f1_per_class.append(f1)
-                ba_per_class.append(balanced_acc)
-                correct_per_class.append(TP)
-                total_per_class.append(conf_matrix[i, :].sum())
-            
-    
-        total_correct = conf_matrix.diagonal().sum()  # sum of all true positives
-        total_samples = conf_matrix.sum()  # total number of predictions
-        normal_accuracy = total_correct / total_samples if total_samples > 0 else 0.0
-    
-        # Macro-Averaged 
-        macro_avg_f1 = np.mean([f for f in f1_per_class])
-        macro_avg_ba_allclasses = np.mean([ba for ba in ba_per_class]) # note: balance accuracy is only for dataset with 3 classes & above
-    
-        # Weighted overall ba per class (total i class sample * ba for i class + ...) / total all classes samples
-        weighted_ba = np.sum([ba * total_samples for ba, total_samples in zip(ba_per_class, total_per_class)]) / np.sum(total_per_class)
-        weighted_f1 = np.sum([f * total_samples for f, total_samples in zip(f1_per_class, total_per_class)]) / np.sum(total_per_class)
-
-        conf_matrix = list([[int(value) for value in row] for row in conf_matrix.tolist()])
-
-        return conf_matrix, normal_accuracy, macro_avg_f1, weighted_f1, macro_avg_ba_allclasses, weighted_ba, total_samples
 
 
     @app.post('/test')
     async def test():
         global local_model, train_losses, train_labels, train_preds
         test_losses = 0
-        test_labels = []
-        test_preds = []
+        test_labels, test_preds = [], []
 
         glbModelParam = pickle.loads(requests.get(f'http://127.0.0.1:{base_port - 1}/get_glb_params').content)
         local_model.load_state_dict(glbModelParam)
         local_model.eval()
 
-        inputs = torch.stack(testData['image'].tolist()).float()
-        labels = torch.tensor(testData['label'].values)
-        
-        # inputs = torch.from_numpy(testData.drop(columns=['labels']).values).float()
-        # labels = torch.from_numpy(testData['labels'].values).long()
+        if args.dataset in ['mnist', 'cifar10', 'cifar100', 'tinyimagenet', 'pacs', 'digitdg']:
+            inputs = torch.stack(testData['image'].tolist()).float()
+            labels = torch.tensor(testData['label'].values)
+        else:
+            inputs = torch.from_numpy(testData.drop(columns=['labels']).values).float()
+            labels = torch.from_numpy(testData['labels'].values).long()
 
         test_loader = DataLoader(TensorDataset(inputs, labels), batch_size=128, shuffle=False)
         with torch.no_grad():
@@ -216,8 +165,6 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
                 test_losses += criterion(preds, labels).item()
                 test_labels.extend(labels.tolist())
                 test_preds.extend(predicted.tolist())
-        
-
         
         conf_matrix, normal_accuracy, macro_avg_f1, weighted_f1, macro_avg_ba_allclasses, weighted_ba, total_train_size = model_performance(train_labels, train_preds, datasets_labels_count[args.dataset])    
         test_conf_matrix, test_normal_accuracy, test_macro_avg_f1, test_weighted_f1, test_macro_avg_ba_allclasses, test_weighted_ba, total_test_size = model_performance(test_labels, test_preds, datasets_labels_count[args.dataset])  
@@ -238,8 +185,7 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
                                 }})
         
         train_losses = 0
-        train_labels = []
-        train_preds = []
+        train_labels, train_preds = [], []
         
         return Response(response_json, media_type='application/octet-stream')
                                    

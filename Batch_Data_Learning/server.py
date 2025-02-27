@@ -28,6 +28,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import utils.model
 from utils.model import batch_learning_model
 from Batch_Data_Learning.custom_batch_norm import *
+from utils.model_metrics import get_metrics_average
 
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -41,7 +42,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # tenseal context
 context = None
-
 # Shared variable to accumulate tensors
 overallBatchSum, overallBatchStdv = [], []
 batchMean, batchVar = None, None
@@ -221,6 +221,17 @@ async def compute_batch_partTerm3(request: Request):
     return Response(serialzBatchPartTerm3, media_type='application/octet-stream')
 
 
+def get_all_batchNormLayers():
+    global batchNormLayersBM, batchNormLayersVAR
+    batchNormLayersBM = []
+    batchNormLayersVAR = []
+    for layer in glb_model.modules():  
+        if isinstance(layer, CustomBatchNormManualModule):
+            batchNormLayersBM.append(layer.to(device))
+            batchNormLayersVAR.append(layer.to(device))
+    return 'done'
+
+
 def send_generateEncryptContext_request(clients): 
     global context 
 
@@ -349,7 +360,6 @@ def send_PlaceholderMapToRealLabel(client, mapping):
 
 
 async def send_prepareTrainData_request(clients):
-    print('in send prepare train data request funct')
     async with httpx.AsyncClient(timeout=None) as client_session:
         # Create a list of asynchronous POST request tasks
         tasks = [client_session.post(f"http://127.0.0.1:{basePort + client}/prepareTrainData") for client in clients]
@@ -389,17 +399,6 @@ async def send_trainingCompleted_signal(clients):
         tasks = [client_session.post(f"http://127.0.0.1:{basePort + client}/federatedLearningCompleted") for client in clients]
         responses = await asyncio.gather(*tasks)
     return {"status": "Training completed signals sent"}
-
-
-def get_all_batchNormLayers():
-    global batchNormLayersBM, batchNormLayersVAR
-    batchNormLayersBM = []
-    batchNormLayersVAR = []
-    for layer in glb_model.modules():  
-        if isinstance(layer, CustomBatchNormManualModule):
-            batchNormLayersBM.append(layer.to(device))
-            batchNormLayersVAR.append(layer.to(device))
-    return 'done'
 
 
 async def start_federated_learning(basePort):
@@ -465,68 +464,78 @@ async def start_federated_learning(basePort):
         
         clientsTestResult = await send_computeTestDataAcc_request(clients)
         epoch_acc['result'] = clientsTestResult
-        
 
-        train_accs = []
-        train_weight_accs = []
-        train_macro_BA = []
-        train_weight_BA = []
-        train_macro_f1 = []
-        train_weight_f1 = []
-        total_train_samples = 0
-        
-        test_accs = []
-        test_weight_accs = []
-        test_macro_BA = []
-        test_weight_BA = []
-        test_macro_f1 = []
-        test_weight_f1 = []
-        total_test_samples = 0
-        
-        for client in epoch_acc['result']:
-            client_name = list(client.keys())[0]
-            train_accs.append(client[client_name]['train_normal_accuracy'])
-            train_weight_accs.append(client[client_name]['train_normal_accuracy'] * client[client_name]['train_size'])
-            train_macro_BA.append(client[client_name]['train_macro_avg_ba_allclasses'])
-            train_weight_BA.append(client[client_name]['train_weighted_ba'] * client[client_name]['train_size'])
-            train_macro_f1.append(client[client_name]['train_macro_avg_f1'])
-            train_weight_f1.append(client[client_name]['train_weighted_f1'] * client[client_name]['train_size'])
-
-            total_train_samples += client[client_name]['train_size']
-            
-            test_accs.append(client[client_name]['test_normal_accuracy'])
-            test_weight_accs.append(client[client_name]['test_normal_accuracy'] * client[client_name]['test_size'])
-            test_macro_BA.append(client[client_name]['test_macro_avg_ba_allclasses'])
-            test_weight_BA.append(client[client_name]['test_weighted_ba'] * client[client_name]['test_size'])
-            test_macro_f1.append(client[client_name]['test_macro_avg_f1'])
-            test_weight_f1.append(client[client_name]['test_weighted_f1'] * client[client_name]['test_size'])
-            
-            total_test_samples += client[client_name]['test_size']
-
-        
+        epoch_avg_result = get_metrics_average(epoch_acc['result'])
         with open(resultFilePath, 'a') as file:
-            file.write(str(epoch_acc) + '\n')
-            file.write('\n')
+            # file.write(str(epoch_acc) + '\n')
+            file.write(f"Epoch {epoch}:")
+            file.write(epoch_avg_result)
             file.write(
-                f"Average Test metrics: Macro Test Acc: {np.mean(test_accs)} "
-                f"Weighted Test Acc: {np.sum(test_weight_accs) / total_test_samples} "
-                f"Macro Balanced Test Acc: {np.mean(test_macro_BA)} "
-                f"Weighted Balanced Test Acc: {np.sum(test_weight_BA) / total_test_samples} "
-                f"Macro Test F1: {np.mean(test_macro_f1)} "
-                f"Weighted Test F1: {np.sum(test_weight_f1) / total_test_samples}\n"
-                
-
-                f"Average Train metrics: Macro Train Acc: {np.mean(train_accs)} "
-                f"Weighted Train Acc: {np.sum(train_weight_accs) / total_train_samples} "
-                f"Macro Balanced Train Acc: {np.mean(train_macro_BA)} "
-                f"Weighted Balanced Train Acc: {np.sum(train_weight_BA) / total_train_samples} "
-                f"Macro Train F1: {np.mean(train_macro_f1)} "
-                f"Weighted Train F1: {np.sum(train_weight_f1) / total_train_samples}\n"
-                f"\n"
                 f"Per Epoch Training Start Time: {start_time}\n"
                 f"Per Epoch Training End Time: {epoch_time}\n"
                 f"\n"
             )
+
+        # train_accs = []
+        # train_weight_accs = []
+        # train_macro_BA = []
+        # train_weight_BA = []
+        # train_macro_f1 = []
+        # train_weight_f1 = []
+        # total_train_samples = 0
+        
+        # test_accs = []
+        # test_weight_accs = []
+        # test_macro_BA = []
+        # test_weight_BA = []
+        # test_macro_f1 = []
+        # test_weight_f1 = []
+        # total_test_samples = 0
+        
+        # for client in epoch_acc['result']:
+        #     client_name = list(client.keys())[0]
+        #     train_accs.append(client[client_name]['train_normal_accuracy'])
+        #     train_weight_accs.append(client[client_name]['train_normal_accuracy'] * client[client_name]['train_size'])
+        #     train_macro_BA.append(client[client_name]['train_macro_avg_ba_allclasses'])
+        #     train_weight_BA.append(client[client_name]['train_weighted_ba'] * client[client_name]['train_size'])
+        #     train_macro_f1.append(client[client_name]['train_macro_avg_f1'])
+        #     train_weight_f1.append(client[client_name]['train_weighted_f1'] * client[client_name]['train_size'])
+
+        #     total_train_samples += client[client_name]['train_size']
+            
+        #     test_accs.append(client[client_name]['test_normal_accuracy'])
+        #     test_weight_accs.append(client[client_name]['test_normal_accuracy'] * client[client_name]['test_size'])
+        #     test_macro_BA.append(client[client_name]['test_macro_avg_ba_allclasses'])
+        #     test_weight_BA.append(client[client_name]['test_weighted_ba'] * client[client_name]['test_size'])
+        #     test_macro_f1.append(client[client_name]['test_macro_avg_f1'])
+        #     test_weight_f1.append(client[client_name]['test_weighted_f1'] * client[client_name]['test_size'])
+            
+        #     total_test_samples += client[client_name]['test_size']
+
+        
+        # with open(resultFilePath, 'a') as file:
+        #     file.write(str(epoch_acc) + '\n')
+        #     file.write('\n')
+        #     file.write(
+        #         f"Average Test metrics: Macro Test Acc: {np.mean(test_accs)} "
+        #         f"Weighted Test Acc: {np.sum(test_weight_accs) / total_test_samples} "
+        #         f"Macro Balanced Test Acc: {np.mean(test_macro_BA)} "
+        #         f"Weighted Balanced Test Acc: {np.sum(test_weight_BA) / total_test_samples} "
+        #         f"Macro Test F1: {np.mean(test_macro_f1)} "
+        #         f"Weighted Test F1: {np.sum(test_weight_f1) / total_test_samples}\n"
+                
+
+        #         f"Average Train metrics: Macro Train Acc: {np.mean(train_accs)} "
+        #         f"Weighted Train Acc: {np.sum(train_weight_accs) / total_train_samples} "
+        #         f"Macro Balanced Train Acc: {np.mean(train_macro_BA)} "
+        #         f"Weighted Balanced Train Acc: {np.sum(train_weight_BA) / total_train_samples} "
+        #         f"Macro Train F1: {np.mean(train_macro_f1)} "
+        #         f"Weighted Train F1: {np.sum(train_weight_f1) / total_train_samples}\n"
+        #         f"\n"
+        #         f"Per Epoch Training Start Time: {start_time}\n"
+        #         f"Per Epoch Training End Time: {epoch_time}\n"
+        #         f"\n"
+        #     )
         
 
     end_time = datetime.now()
@@ -565,7 +574,6 @@ async def begin():
     await server_task
         
 if __name__ == '__main__':
-    # asyncio.run(begin())
     loop = asyncio.get_event_loop()
     loop.run_until_complete(begin())
 
