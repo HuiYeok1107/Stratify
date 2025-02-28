@@ -28,7 +28,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils.data import dataset_train_test, dataset_transform, datasets_labels_count
 from utils.nonIIDPartition import *
 import utils.model
-from utils.model import batch_learning_model
+from utils.model import batch_learning_model, setBatchSize
 from utils.model_metrics import model_performance
 
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -83,18 +83,21 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
     
 
     @app.post('/decryptIntermediateComparisonResult') 
-    async def decryptComparisonResult(enc_comparison_val: UploadFile = File(...), placeholder_to_target_mapping_stage: UploadFile = File(...)):
+    async def decryptComparisonResult(enc_comparison_val: UploadFile = File(...), mapping_stage: UploadFile = File(...)):
         global context
-        encComparisonValue = ts.ckks_vector_from(context, pickle.loads(await enc_comparison_val.read()))
-        placeh_mapping_stage = await placeholder_to_target_mapping_stage.read()
-        comparisonValue = encComparisonValue.decrypt()
-        # set comparison value as 0 or 1 during placeholder mapping stage to avoid malicious server from using the minus result to infer the real label client holds
+        placeh_mapping_stage = await mapping_stage.read()
+        # set comparison value as 0 or 1 during placeholder mapping stage to avoid malicious server from using the minus result to infer the real label a client holds
         if placeh_mapping_stage.decode() == 'True':
-            if abs(comparisonValue[0]) < 1e-5: 
-                comparisonValue = 0
+            intermediateRes = ts.ckks_vector_from(context, pickle.loads(await enc_comparison_val.read())).decrypt() 
+            if abs(intermediateRes[0]) < 1e-5: 
+                intermediateRes = 0
             else:
-                comparisonValue = 1
-        return Response(pickle.dumps(comparisonValue), media_type='application/octet-stream')
+                intermediateRes = 1
+        else:
+            intermediateRes = pickle.loads(await enc_comparison_val.read())
+            for p, noisyEncValue in intermediateRes.items():
+                intermediateRes[p] = ts.ckks_vector_from(context, noisyEncValue).decrypt()
+        return Response(pickle.dumps(intermediateRes), media_type='application/octet-stream')
 
 
     @app.post('/encryptLabels') 
@@ -202,8 +205,8 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         glb_model_params = pickle.loads(serializ_glb_model_params)
 
         batchSize = pickle.loads(await batch_size.read())
-        utils.model.batchSize = batchSize # set the batch size in client's model architecture file for custom batch normalisation usage
-        
+        setBatchSize(batchSize) # set the batch size in client's model architecture file for custom batch normalisation usage
+
         # forward and backward pass to accumulate local gradients summed
         local_model.load_state_dict(glb_model_params)
         local_model = local_model.to(device)

@@ -4,7 +4,11 @@ import torch.nn.functional as F
 import torchvision.models as models
 import os, sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import Batch_Data_Learning
 from Batch_Data_Learning.custom_batch_norm import *
+
+def setBatchSize(batchSize):
+    Batch_Data_Learning.custom_batch_norm.batchSize = batchSize
 
 def conv_block(in_channels, out_channels, pool=False):
     layers = [nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),

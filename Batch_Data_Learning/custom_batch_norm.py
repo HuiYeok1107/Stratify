@@ -5,8 +5,9 @@ import pickle
 from Batch_Data_Learning.args import args_parser
 global args
 args = args_parser()
+
 serverPort = args.start_port 
-batchSize = 400
+batchSize = 0
 
 class CustomBatchNormManualFunction(torch.autograd.Function):
   @staticmethod

@@ -17,6 +17,7 @@ import os
 import sys
 import pickle
 import random
+import math
 import signal
 import itertools 
 import string
@@ -58,9 +59,6 @@ clientsCountTracker = 0
 
 basePort = args.start_port
 glb_model = batch_learning_model[args.dataset].to(device)
-max_lr = 0.001
-optimizer = optim.Adam(glb_model.parameters(), max_lr, weight_decay=0.001)  
-lr_schedl = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr, epochs=30, steps_per_epoch=int(50000/400))
 
 app = FastAPI()
 
@@ -261,7 +259,7 @@ def computePlaceholders(serialz_clients_enc_info):
                 # send the enc_res back to the client for decryption and get back the result
                 # serialized_enc_res = enc_res.serialize()
                 # client_decrypted_res = ts.ckks_vector_from(context, serialized_enc_res).decrypt()
-                res = requests.post(f'http://127.0.0.1:{basePort + 1}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(enc_res.serialize()), 'placeholder_to_target_mapping_stage': 'True'})
+                res = requests.post(f'http://127.0.0.1:{basePort + 1}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(enc_res.serialize()), 'mapping_stage': 'True'})
                 client_decrypted_res = pickle.loads(res.content)
 
                 if client_decrypted_res == 0:  
@@ -289,30 +287,35 @@ def computePlaceholders(serialz_clients_enc_info):
         return placeholders
     
     placeholders = generate_placeholders(200)
-    
+    random.shuffle(placeholders)
     
     placeholderTargetMapEncRealTarget = {placeholderKey: encTarget for placeholderKey, encTarget in zip(placeholders, uniqueList)}
     clientsAvailPlaceholderTargets = {}
-    # Server sends the client its respective list on placeholder target which map to its real target so that when the clients receive the list of placeholders to train from server, the client can know the target is correspond to which real target sample to train
+    # placeholder to encrypted real label mapping for each client to convert the placeholder to train from server to the corresponding real label to train
     clientsPlaceholderTargetMapEncRealTarget = {}
 
     for clientID, clientEncTargetTargetAmtVectors in list(zip(['c' + str(num) for num in range(1, len(clients_enc_info)+1)], clients_enc_info)):   
         clientsAvailPlaceholderTargets[clientID] = []
         clientsPlaceholderTargetMapEncRealTarget[clientID] = {}
+        placeholderTargetMapEncRealTargetCopy = placeholderTargetMapEncRealTarget.copy()
         for clientEncTargetTargetAmtVector in clientEncTargetTargetAmtVectors:
-            for placeholder, encRealTargetInUniqueList in placeholderTargetMapEncRealTarget.items():
+            for placeholder, encRealTargetInUniqueList in placeholderTargetMapEncRealTargetCopy.items():
+                # print('placeder map to target length:')
+                # print(len(placeholderTargetMapEncRealTarget))
+                # print(len(placeholderTargetMapEncRealTargetCopy))
                 enc_res = clientEncTargetTargetAmtVector[0] - encRealTargetInUniqueList
                 # Server sends the enc_res back to the client for decryption and get back the comparison result
                 # client_decrypted_res = enc_res.decrypt()
 
-                res = requests.post(f'http://127.0.0.1:{basePort + int(clientID[1:])}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(enc_res.serialize()), 'placeholder_to_target_mapping_stage': 'True'})
+                res = requests.post(f'http://127.0.0.1:{basePort + int(clientID[1:])}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(enc_res.serialize()), 'mapping_stage': 'True'})
                 client_decrypted_res = pickle.loads(res.content)
 
                 if client_decrypted_res == 0:
-                    clientsAvailPlaceholderTargets[clientID].append((placeholder, clientEncTargetTargetAmtVector[1]))   
-                    clientsPlaceholderTargetMapEncRealTarget[clientID][placeholder] = clientEncTargetTargetAmtVector[0]
+                    clientsAvailPlaceholderTargets[clientID].append((placeholder, clientEncTargetTargetAmtVector[1]))   # for server to keep track the available placeholders of client
+                    clientsPlaceholderTargetMapEncRealTarget[clientID][placeholder] = clientEncTargetTargetAmtVector[0] # placeholder-to-encRealLabel map
+                    del placeholderTargetMapEncRealTargetCopy[placeholder]
                     break   
-    
+
     # global counts
     sums = {}
     for client, items in clientsAvailPlaceholderTargets.items():
@@ -321,34 +324,50 @@ def computePlaceholders(serialz_clients_enc_info):
                 sums[placeholder] = 0
             sums[placeholder] = sums[placeholder] + placeholderAmt
 
+    noises = {}
     for placeholder, encPlaceholderSum in sums.items():
-        # server adds random value to encrypted sum, serialized sum vector and send to client for decryption 
+        # server adds random value to encrypted global count, serialized sum vector and send to client for decryption 
         noise = random.randint(100, 1000)
-        encPlaceholderSum = encPlaceholderSum + noise
+        noises[placeholder] = noise
+        sums[placeholder] = (encPlaceholderSum + noise).serialize()
 
-        res = requests.post(f'http://127.0.0.1:{basePort + int(clientID[1:])}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(encPlaceholderSum.serialize()), 'placeholder_to_target_mapping_stage': 'False'})
-        clientDecrypted_placeholderSum = pickle.loads(res.content)[0] - noise
+    res = requests.post(f'http://127.0.0.1:{basePort + int(clientID[1:])}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(sums), 'mapping_stage': 'False'})
+    res = pickle.loads(res.content)
+    for placeholder, placeholderGlobalSum in res.items():
+        clientDecrypted_placeholderSum = placeholderGlobalSum[0] - noises[placeholder]
         sums[placeholder] = clientDecrypted_placeholderSum
-
-        # serializedEncPlaceholderSum = encPlaceholderSum.serialize()
-        # clientDecrypted_placeholderSumWithNoise = ts.ckks_vector_from(context, serializedEncPlaceholderSum).decrypt()[0] 
-        # clientDecrypted_placeholderSum = clientDecrypted_placeholderSumWithNoise - noise
-        # sums[placeholder] = clientDecrypted_placeholderSum
 
 
     # calculate the normalized label proportion for each client label
     for client, items in clientsAvailPlaceholderTargets.items():
+        noises = {}
+        clientAvailPlaceholderTarget = {}
         for i, (placeholder, placeholderAmt) in enumerate(items):
             inverseTotal = 1 / sums[placeholder]
-            encNormalizedLabelProp = placeholderAmt * inverseTotal  # Normalize by dividing by the sum
+            noise = random.random()
+            noises[placeholder] = noise
+            encNormalizedLabelProp = ((placeholderAmt * inverseTotal) + noise).serialize() # Normalize by dividing by the sum
+            clientAvailPlaceholderTarget[placeholder] = encNormalizedLabelProp
+        res = requests.post(f'http://127.0.0.1:{basePort + int(client[1:])}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(clientAvailPlaceholderTarget), 'mapping_stage': 'False'})
+        clientDecrypted_normalizedLabelProp = pickle.loads(res.content)
+        for i, (placeholder, noisyPlaceholderAmtProp) in enumerate(clientDecrypted_normalizedLabelProp.items()):
+            clientsAvailPlaceholderTargets[client][i] = (placeholder, noisyPlaceholderAmtProp[0] - noises[placeholder])  # Assign decrypted normalized value back
 
-            res = requests.post(f'http://127.0.0.1:{basePort + int(client[1:])}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(encNormalizedLabelProp.serialize()), 'placeholder_to_target_mapping_stage': 'False'})
-            clientDecrypted_normalizedLabelProp = pickle.loads(res.content)[0]
 
-            # serialEncNormalizedLabelProp = encNormalizedLabelProp.serialize() # server serialized encrypted normalized value result and send to the respective client for decryption
-            # clientDecrypted_normalizedLabelProp = ts.ckks_vector_from(context, serialEncNormalizedLabelProp).decrypt()[0] # client decrypt encrypted result and send back to server
+    # calculate the normalized label proportion for each client label
+    # for client, items in clientsAvailPlaceholderTargets.items():
+    #     noises = []
+    #     for i, (placeholder, placeholderAmt) in enumerate(items):
+    #         inverseTotal = 1 / sums[placeholder]
+    #         encNormalizedLabelProp = placeholderAmt * inverseTotal  # Normalize by dividing by the sum
 
-            clientsAvailPlaceholderTargets[client][i] = (placeholder, clientDecrypted_normalizedLabelProp)  # Assign decrypted normalized value back
+    #         res = requests.post(f'http://127.0.0.1:{basePort + int(client[1:])}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(encNormalizedLabelProp.serialize()), 'placeholder_to_target_mapping_stage': 'False'})
+    #         clientDecrypted_normalizedLabelProp = pickle.loads(res.content)[0]
+
+    #         # serialEncNormalizedLabelProp = encNormalizedLabelProp.serialize() # server serialized encrypted normalized value result and send to the respective client for decryption
+    #         # clientDecrypted_normalizedLabelProp = ts.ckks_vector_from(context, serialEncNormalizedLabelProp).decrypt()[0] # client decrypt encrypted result and send back to server
+
+    #         clientsAvailPlaceholderTargets[client][i] = (placeholder, clientDecrypted_normalizedLabelProp)  # Assign decrypted normalized value back
 
     return sums, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget
     
@@ -404,12 +423,14 @@ async def send_trainingCompleted_signal(clients):
 async def start_federated_learning(basePort):
     global totalAssignedClientsInBatch
     
-    epochs = 2
-    batchSize = 400
+    epochs = args.epochs
+    batchSize = args.batch_size
+    lr = args.lr
+    weight_decay = args.weight_decay
+    momentum = args.momentum
     clients = list(range(1, args.client_num + 1)) # replace range with actual clients address in production environment
     
     send_generateEncryptContext_request(clients) 
-
     serialz_clients_enc_info = []
     for client in clients: # send the request using loop instead of threading because the server needs to know the encrypted label is sent from which client so that the assigned placeholder can be sent to the correct client in later stage
         response = requests.post(f'http://127.0.0.1:{basePort + int(client)}/encryptLabels')
@@ -421,12 +442,24 @@ async def start_federated_learning(basePort):
     for client, mapping in clientsPlaceholderTargetMapEncRealTarget.items():    
         send_PlaceholderMapToRealLabel(client, mapping) 
     
+    if args.optimizer == 'adam':
+        optimizer = optim.Adam(glb_model.parameters(), lr, weight_decay=weight_decay)  
+    elif args.optimizer == 'sgd':
+        optimizer = optim.SGD(glb_model.parameters(), lr, momentum=momentum)  
+    else:
+        # log error ask user to add in other optimizer in code if required
+        pass
+    
+    if args.lr_scheduler == 1:
+        print('lr scheduler on')
+        lr_schedl = torch.optim.lr_scheduler.OneCycleLR(optimizer, lr, epochs=epochs, steps_per_epoch=math.ceil(round(sum([count for placeholder, count in sums.items()])) / batchSize))
+    
     resultFilePath = args.resultFilePath
     start_time = datetime.now()
 
     for epoch in range(1, epochs+1):
         torch.cuda.empty_cache()
-        targets, mappedClientAssignedForPlaceholder = init(sums, clientsAvailPlaceholderTargets) ##
+        targets, mappedClientAssignedForPlaceholder = init(sums, clientsAvailPlaceholderTargets) 
 
         await send_prepareTrainData_request(clients)
         
@@ -457,7 +490,8 @@ async def start_federated_learning(basePort):
                 param.grad = clipped_grad
                 # param.grad = avg_grad
             optimizer.step()
-            lr_schedl.step()
+            if args.lr_scheduler == 1:
+                lr_schedl.step()
         
         epoch_acc = {"epoch": epoch, "result": []}
         epoch_time = datetime.now()
@@ -468,75 +502,13 @@ async def start_federated_learning(basePort):
         epoch_avg_result = get_metrics_average(epoch_acc['result'])
         with open(resultFilePath, 'a') as file:
             # file.write(str(epoch_acc) + '\n')
-            file.write(f"Epoch {epoch}:")
+            file.write(f"Epoch {epoch}:\n")
             file.write(epoch_avg_result)
             file.write(
                 f"Per Epoch Training Start Time: {start_time}\n"
                 f"Per Epoch Training End Time: {epoch_time}\n"
                 f"\n"
             )
-
-        # train_accs = []
-        # train_weight_accs = []
-        # train_macro_BA = []
-        # train_weight_BA = []
-        # train_macro_f1 = []
-        # train_weight_f1 = []
-        # total_train_samples = 0
-        
-        # test_accs = []
-        # test_weight_accs = []
-        # test_macro_BA = []
-        # test_weight_BA = []
-        # test_macro_f1 = []
-        # test_weight_f1 = []
-        # total_test_samples = 0
-        
-        # for client in epoch_acc['result']:
-        #     client_name = list(client.keys())[0]
-        #     train_accs.append(client[client_name]['train_normal_accuracy'])
-        #     train_weight_accs.append(client[client_name]['train_normal_accuracy'] * client[client_name]['train_size'])
-        #     train_macro_BA.append(client[client_name]['train_macro_avg_ba_allclasses'])
-        #     train_weight_BA.append(client[client_name]['train_weighted_ba'] * client[client_name]['train_size'])
-        #     train_macro_f1.append(client[client_name]['train_macro_avg_f1'])
-        #     train_weight_f1.append(client[client_name]['train_weighted_f1'] * client[client_name]['train_size'])
-
-        #     total_train_samples += client[client_name]['train_size']
-            
-        #     test_accs.append(client[client_name]['test_normal_accuracy'])
-        #     test_weight_accs.append(client[client_name]['test_normal_accuracy'] * client[client_name]['test_size'])
-        #     test_macro_BA.append(client[client_name]['test_macro_avg_ba_allclasses'])
-        #     test_weight_BA.append(client[client_name]['test_weighted_ba'] * client[client_name]['test_size'])
-        #     test_macro_f1.append(client[client_name]['test_macro_avg_f1'])
-        #     test_weight_f1.append(client[client_name]['test_weighted_f1'] * client[client_name]['test_size'])
-            
-        #     total_test_samples += client[client_name]['test_size']
-
-        
-        # with open(resultFilePath, 'a') as file:
-        #     file.write(str(epoch_acc) + '\n')
-        #     file.write('\n')
-        #     file.write(
-        #         f"Average Test metrics: Macro Test Acc: {np.mean(test_accs)} "
-        #         f"Weighted Test Acc: {np.sum(test_weight_accs) / total_test_samples} "
-        #         f"Macro Balanced Test Acc: {np.mean(test_macro_BA)} "
-        #         f"Weighted Balanced Test Acc: {np.sum(test_weight_BA) / total_test_samples} "
-        #         f"Macro Test F1: {np.mean(test_macro_f1)} "
-        #         f"Weighted Test F1: {np.sum(test_weight_f1) / total_test_samples}\n"
-                
-
-        #         f"Average Train metrics: Macro Train Acc: {np.mean(train_accs)} "
-        #         f"Weighted Train Acc: {np.sum(train_weight_accs) / total_train_samples} "
-        #         f"Macro Balanced Train Acc: {np.mean(train_macro_BA)} "
-        #         f"Weighted Balanced Train Acc: {np.sum(train_weight_BA) / total_train_samples} "
-        #         f"Macro Train F1: {np.mean(train_macro_f1)} "
-        #         f"Weighted Train F1: {np.sum(train_weight_f1) / total_train_samples}\n"
-        #         f"\n"
-        #         f"Per Epoch Training Start Time: {start_time}\n"
-        #         f"Per Epoch Training End Time: {epoch_time}\n"
-        #         f"\n"
-        #     )
-        
 
     end_time = datetime.now()
     with open(resultFilePath, 'a') as file:

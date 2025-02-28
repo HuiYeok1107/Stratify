@@ -3,7 +3,6 @@ from datasets import load_dataset
 import torchvision.transforms as transforms
 from torchvision import datasets
 from PIL import Image
-# import deeplake
 import numpy as np
 import pandas as pd
 import gdown
@@ -13,13 +12,11 @@ import io
 import os
 import tensorflow as tf
 
-
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
     try:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-        print("Enabled GPU memory growth.")
     except RuntimeError as e:
         print(e)
 
@@ -51,7 +48,6 @@ def get_cifar10_df():
     traindf = traindf.sample(frac=0.1)
     data = tfds.load('cifar10', split='test')
     testdf = tfds.as_dataframe(data)
-    # testdf = testdf.rename(columns={"image": "images", "label": "labels"})
     
     return traindf, testdf, 10
 
@@ -97,9 +93,7 @@ def transform_cifar100(img, train=False, augment=False):
 def get_tinyImageNet_df():
     ds = load_dataset("zh-plus/tiny-imagenet", trust_remote_code=True) #cache_dir="/scr/user/huiyeok/datasets"
     traindf = ds['train'].to_pandas()
-    # traindf = traindf.rename(columns={targetColName: "labels", "image": "images"})
     testdf = ds['valid'].to_pandas()
-    # testdf = testdf.rename(columns={targetColName: "labels", "image": "images"})
     
     return traindf, testdf, 200
 
@@ -140,6 +134,7 @@ def get_covtype_df():
 
     
 def get_pacs_df():
+    import deeplake
     if os.path.exists(f"Fed-GT/utils/dataset/pacsTrain.pkl") and os.path.exists("Fed-GT/utils/dataset/pacsTest.pkl") :
         traindf = pd.read_pickle("Fed-GT/utils/dataset/pacsTrain.pkl")
         testdf = pd.read_pickle("Fed-GT/utils/dataset/pacsTest.pkl")
