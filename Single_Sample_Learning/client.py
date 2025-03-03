@@ -19,7 +19,7 @@ import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils.data import dataset_train_test, dataset_transform, datasets_labels_count
-from utils.nonIIDPartition import *
+from utils.nonIID_partition import *
 import utils.model
 from utils.model import single_sample_learning_model
 from utils.model_metrics import model_performance
