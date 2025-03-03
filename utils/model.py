@@ -288,9 +288,8 @@ class CIFAR100_CNNModel_SingleS(nn.Module):
         return x
 
 
-
 batch_learning_model = {
-    "mnist": LeNet(), # add in later***
+    "mnist": LeNet(),
     "cifar10": ResNet9(3,10),
     "cifar100": ResNet9(3,10),
     "tinyimagenet": resnet18,

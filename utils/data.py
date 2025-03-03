@@ -23,7 +23,7 @@ if gpus:
 def get_mnist_df():
     data = tfds.load('mnist', split='train')
     traindf = tfds.as_dataframe(data)
-    traindf = traindf.sample(n=1000)
+    # traindf = traindf.sample(n=1000)
     
     data = tfds.load('mnist', split='test')
     testdf = tfds.as_dataframe(data)
@@ -46,7 +46,7 @@ def transform_mnist(img, train=False, augment=False):
 def get_cifar10_df():
     data = tfds.load('cifar10', split='train')
     traindf = tfds.as_dataframe(data)
-    traindf = traindf.sample(frac=0.1)
+    # traindf = traindf.sample(frac=0.1)
     data = tfds.load('cifar10', split='test')
     testdf = tfds.as_dataframe(data)
     
