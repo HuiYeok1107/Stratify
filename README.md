@@ -18,7 +18,7 @@ pip install -r requirements.txt
 
 ```
 ## Experiment
-Available arguments and usage:
+Below are the command-line arguments you can use to customize the training process.
 | Argument       | Type   | Default  | Description |
 |---------------|--------|----------|-------------|
 | `dataset`   | `str`  | `mnist`  | Dataset to train on. Options: `mnist`, `cifar10`, `cifar100`, 'tinyimagenet` (only for batch learning), `covtype`, `pacs`, `digitdg`. |
@@ -38,7 +38,7 @@ Available arguments and usage:
 | `resultFilePath`  | `str` | `result.txt`   | The file to write model performance metrics on. |
 | `startport` | `int`  | `5000`   | Starting port number. Each client will be assigned to each unique port, incrementing from this port. |
 
-<p align="justify">❗ **IMPORTANT:** in this implementation, each client is spawned as a separate process to simulate the federated learning (FL) training environment using a single machine. Hence, please ensure that --client_num is less than the available CPU cores in your machine to avoid system crash. Due to context switching between processes, the training time in this simulation does not accurately reflect real-world FL training, especially as the number of clients increases. For an accurate measure of training time, we recommend deploying each client on a separate cloud instance or physical machine to avoid process scheduling overhead. You can use the example script in ... to run the training with cloud instances. <p>
+<p align="justify">❗ <b>IMPORTANT:</b> in this implementation, each client is spawned as a separate process to simulate the federated learning (FL) training environment using a single machine. Hence, please ensure that --client_num is less than the available CPU cores in your machine to avoid system crash. Due to context switching between processes, the training time in this simulation does not accurately reflect real-world FL training, especially as the number of clients increases. For an accurate measure of training time, we recommend deploying each client on a separate cloud instance or physical machine to avoid process scheduling overhead. You can use the example script in ... to run the training with cloud instances. <p>
 
 For a complete list of training hyperparameters specific to each dataset, please refer to x.txt.
 
