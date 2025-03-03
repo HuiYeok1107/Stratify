@@ -2,13 +2,14 @@ from args import args_parser
 global args
 args = args_parser()
 
-from fastapi import FastAPI, Response,  File, UploadFile
+from fastapi import FastAPI, Response,  File, UploadFile, Request
 import asyncio
 import uvicorn
 import httpx
 import requests
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import io 
 
 import psutil
 import pickle
@@ -25,9 +26,11 @@ import utils.model
 from utils.model import single_sample_learning_model
 from utils.model_metrics import get_metrics_average
 
+import torch
 import numpy as np
 import tenseal as ts
 context = None 
+import time
 
 basePort = args.start_port
 glb_model = single_sample_learning_model[args.dataset]
@@ -175,41 +178,13 @@ async def send_trainingCompleted_signal(clients):
     return {"status": "Training completed signals sent"}
 
 
-# def updateClientsPool(data, clientsAvailPlaceholderTargets, targets, consecutiveClientsInQueue, current_client, windowTargets_selectedClients, windowTargets):
-#     target_to_remove = data['target exhausted']
-#     target_data_noTrain = data['target no train']
-#     # unpack target to remove and target not train lists from client
-#     if target_to_remove:
-#         for target in target_to_remove:
-#             clientsAvailPlaceholderTargets[current_client['assigned_client']] = [placeholderPropTuple for placeholderPropTuple in clientsAvailPlaceholderTargets[current_client['assigned_client']] if placeholderPropTuple[0] != target]
-
-#             for clientInQueue in consecutiveClientsInQueue[:]: ##TO-DO: update code in github if the queue contains current client and got assignned to train on the label it has exhausted, remove the client from queue and add the target labels back to targets list
-#                 if (clientInQueue['assigned_client'] == current_client['assigned_client']) and (target in clientInQueue['target_to_train']):
-#                     for targetToIncludeBackOcc in range(clientInQueue['target_to_train'].count(target)):
-#                         targets.insert(random.randint(0, len(targets)), target)
-#                         # targetsReassign += 1
-#                         print(f'target no train: {target}')
-#                     newClientTargetToTrain = [t for t in clientInQueue['target_to_train'] if t != target]
-#                     if len(newClientTargetToTrain) == 0:
-#                         consecutiveClientsInQueue.remove(clientInQueue) ##TO-DO: update code in github
-#                     else:
-#                         clientInQueue['target_to_train'] = newClientTargetToTrain
-        
-#     # re-update probabilistic selected clients list for next window targets sorting because there is changes in selected clients for the current window targets and the main clients available targets dictionary
-#     probSelectedClientsAvailForSort_forEachTarget = updateProbabilisticSelectedClientsLists(windowTargets_selectedClients, windowTargets, clientsAvailPlaceholderTargets)
-
-#     if target_data_noTrain: 
-#         print(f'target no train: {target_data_noTrain}')
-#         for targetToIncludeBack in target_data_noTrain: # add targets no train back to the targets list random position
-#             targets.insert(random.randint(0, len(targets)), targetToIncludeBack) 
-#             # targetsReassign += 1
-
 @app.post('/currentGlobalModelParams')
-async def currentGlobalModelParams(glb_model_params: UploadFile = File(...)):
+async def currentGlobalModelParams(request: Request):
     global glb_model
-    glb_model_param = pickle.loads(await glb_model_params.read())
-    glb_model.load_state_dict(glb_model_param)
-    return {'message': "Model updated with latest global parameters."}
+    serializ_glb_model_params = await request.body()
+    buffer = io.BytesIO(serializ_glb_model_params)
+    glb_model.load_state_dict(torch.load(buffer))
+    return {"message": "Model updated with latest global parameters."}
 
 
 def send_generateEncryptContext_request(clients): 
@@ -357,6 +332,7 @@ async def start_federated_learning():
     for client, mapping in clientsPlaceholderTargetMapEncRealTarget.items():    
         send_PlaceholderMapToRealLabel(client, mapping) 
 
+    st = time.time()
     for epoch in range(1, epochs+1):
         # call init()
         targets, clientsAvailPlaceholderTargets, consecutiveClientsInQueue = initVars(sums, clientsAvailPlaceholderTargets)
@@ -389,8 +365,15 @@ async def start_federated_learning():
             current_client['next_assigned_client'] = 's0' if (len(consecutiveClientsInQueue) == 0) else consecutiveClientsInQueue[0]['assigned_client'] # Server prepares info to send current client in queue: if the assigned client is the last one in queue, assign server address as the endpoint to pass the training completed model else provide the next client address to the current client
 
             if firstClient:
-                serialz_glb_model_params = pickle.dumps(glb_model.state_dict()) # server sends randomly intialised global model paramters to first client
-                requests.post(f"http://127.0.0.1:{basePort + int(current_client['assigned_client'][1:])}/currentGlobalModelParams", files={'glb_model_params': serialz_glb_model_params})
+                buffer = io.BytesIO()
+                torch.save(glb_model.state_dict(), buffer, _use_new_zipfile_serialization=False)
+                buffer.seek(0)
+                requests.post(
+                    f"http://127.0.0.1:{basePort + int(current_client['assigned_client'][1:])}/currentGlobalModelParams",
+                    headers={"Content-Type": "application/octet-stream"},
+                    data=buffer.getvalue()
+                )
+                buffer.close() 
                 res = await send_localTrain_request(current_client['assigned_client'], current_client['target_to_train'], current_client['next_assigned_client'])
                 target_to_remove = res['target exhausted']
                 target_data_noTrain = res['target no train']
@@ -400,7 +383,7 @@ async def start_federated_learning():
                 target_to_remove = res['target exhausted']
                 target_data_noTrain = res['target no train']
 
-            # updateClientsPool(res.json(), clientsAvailPlaceholderTargets, targets, consecutiveClientsInQueue, current_client, windowTargets_selectedClients, windowTargets)
+
             if target_to_remove:
                 for target in target_to_remove:
                     clientsAvailPlaceholderTargets[current_client['assigned_client']] = [placeholderPropTuple for placeholderPropTuple in clientsAvailPlaceholderTargets[current_client['assigned_client']] if placeholderPropTuple[0] != target]
@@ -424,7 +407,8 @@ async def start_federated_learning():
                 for targetToIncludeBack in target_data_noTrain: # add targets not train back to the targets list random position
                     targets.insert(random.randint(0, len(targets)), targetToIncludeBack) 
                     # targetsReassign += 1
-    
+
+        et = time.time()
         epoch_acc = {"epoch": epoch, "result": []}
         clientsTestResult = await send_computeTestDataAcc_request(clients)
         epoch_acc['result'] = clientsTestResult
@@ -434,6 +418,8 @@ async def start_federated_learning():
             # file.write(str(epoch_acc) + '\n')
             file.write(f"Epoch {epoch}:\n")
             file.write(epoch_avg_result)
+        
+        print(f'total train time: {et - st}')
             
     model_params = pickle.dumps(glb_model.state_dict())
     # Save the serialized model parameters to a file in the current directory

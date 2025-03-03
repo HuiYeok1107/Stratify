@@ -2,13 +2,14 @@ from args import args_parser
 global args
 args = args_parser()
 
-from fastapi import FastAPI, Response,  File, UploadFile
+from fastapi import FastAPI, Response, File, UploadFile, Request
 import torch.multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import uvicorn
 import httpx
 import psutil 
+import io
 
 import os 
 from itertools import islice
@@ -150,11 +151,11 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
 
 
     @app.post('/currentGlobalModelParams')
-    async def currentGlobalModelParams(glb_model_params: UploadFile = File(...)):
+    async def currentGlobalModelParams(request: Request):
         global model
-        serializ_glb_model_params = await glb_model_params.read()
-        glb_model_params = pickle.loads(serializ_glb_model_params)
-        model.load_state_dict(glb_model_params)
+        serializ_glb_model_params = await request.body()
+        buffer = io.BytesIO(serializ_glb_model_params)
+        model.load_state_dict(torch.load(buffer))
         return {"message": "Model updated with latest global parameters."}
 
 
@@ -278,12 +279,17 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
                 target_exhausted.append(targetPlaceholder)
                 target_noTrain.append(targetPlaceholder) 
         
-        
         # send updated model param to next assigned client
-        serialz_glb_model_params = pickle.dumps(model.state_dict())
-
+        buffer = io.BytesIO()
+        torch.save(model.state_dict(), buffer, _use_new_zipfile_serialization=False)
+        buffer.seek(0)
         async with httpx.AsyncClient() as client:
-            res = await client.post(f'http://127.0.0.1:{base_port - 1 + int(nextClient[1:])}/currentGlobalModelParams', files={'glb_model_params': serialz_glb_model_params})
+            res = await client.post(
+                f'http://127.0.0.1:{base_port - 1 + int(nextClient[1:])}/currentGlobalModelParams', 
+                headers={"Content-Type": "application/octet-stream"},
+                content=buffer.getvalue()
+            )
+        buffer.close() 
         
         # return target exhausted and target no train list back to server
         return {'target exhausted': list(set(target_exhausted)), 'target no train': target_noTrain}
