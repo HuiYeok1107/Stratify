@@ -383,7 +383,7 @@ async def send_localTrain_request(serialz_glb_model_params, currentBatchSize, cl
             for client, placeholdersToTrain in clientsPlaceholdersBatch.items()
         ]
         responses = await asyncio.gather(*tasks)
-        
+
         clients_summed_gradients = [torch.load(io.BytesIO(response.content)) for response in responses]
     
     return clients_summed_gradients
@@ -506,7 +506,7 @@ async def start_federated_learning(basePort):
     
     model_params = pickle.dumps(glb_model.state_dict())
     # Save the serialized model parameters to a file in the current directory
-    with open(f"ModelParams-ClassHold{args.labelOrDomainPerClientHold}-DirAlpha{args.dirichlet}-ClientNum{args.client_num}.pkl", 'wb') as f:
+    with open(f"BatchLearning-ModelParams-ClassHold{args.labelOrDomainPerClientHold}-DirAlpha{args.dirichlet}-ClientNum{args.client_num}.pkl", 'wb') as f:
         f.write(model_params)
             
     await send_trainingCompleted_signal(clients)
