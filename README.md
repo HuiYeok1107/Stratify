@@ -22,7 +22,7 @@ pip install -r requirements.txt
 # Experiment
 
 
-## Batch-Data Per Iteration Learning
+### Batch-Data Per Iteration Learning
 
 
-## Single-Sample Per Iteration Learning
+### Single-Sample Per Iteration Learning
