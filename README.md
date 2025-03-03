@@ -45,23 +45,23 @@ For a complete list of training hyperparameters specific to each dataset, please
 ### Batch-Data Per Iteration Learning
 1. In the first terminal, start the client processes:
    ```bash
-   python /Batch_Data_Learning/client.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 64 --optimizer 'adam'
+   python Batch_Data_Learning/client.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 64 --optimizer 'adam'
    ```
    **Wait for all client processes to initialize before proceeding.**
    
 2. In the second terminal, start the server:
    ```bash
-   python /Batch_Data_Learning/server.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 64 --optimizer 'adam'
+   python Batch_Data_Learning/server.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 64 --optimizer 'adam'
    ```
 ### Single-Sample Per Iteration Learning
 1. In the first terminal, start the client processes:
    ```bash
-   python /Single_Sample_Learning/client.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 1 --optimizer 'adam'
+   python Single_Sample_Learning/client.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 1 --optimizer 'adam'
    ```
    **Wait for all client processes to initialize before proceeding.**
    
 2. In the second terminal, start the server:
    ```bash
-   python /Single_Sample_Learning/server.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 1 --optimizer 'adam'
+   python Single_Sample_Learning/server.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 1 --optimizer 'adam'
    ```
 
