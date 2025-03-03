@@ -48,7 +48,8 @@ For a complete list of training hyperparameters specific to each dataset, please
    python /Batch_Data_Learning/client.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 64 --optimizer 'adam'
    ```
    **Wait for all client processes to initialize before proceeding.**
-2. In the second terminal, start the server:
+   
+3. In the second terminal, start the server:
    ```bash
    python /Batch_Data_Learning/server.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 64 --optimizer 'adam'
    ```
@@ -58,7 +59,8 @@ For a complete list of training hyperparameters specific to each dataset, please
    python /Single_Sample_Learning/client.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 1 --optimizer 'adam'
    ```
    **Wait for all client processes to initialize before proceeding.**
-2. In the second terminal, start the server:
+   
+3. In the second terminal, start the server:
    ```bash
    python /Single_Sample_Learning/server.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 1 --optimizer 'adam'
    ```
