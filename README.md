@@ -1,5 +1,7 @@
 # Fed-GT
-...
+This repository contains the implementation of the algorithms proposed in the paper:  
+**"[Embrace Non-IID Data: Rethinking the Collaboration Approach in Federated Learning]"** by []  
+📄 [Paper Link](#) 
 
 ## Installation
 Follow these steps to set up the project:
@@ -16,7 +18,9 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-## Batch-Data Per Iteration Learning
+```
+
+## Run Batch-Data Per Iteration Learning
 
 
-## Single-Sample Per Iteration Learning
+## Run Single-Sample Per Iteration Learning
