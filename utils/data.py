@@ -23,6 +23,7 @@ if gpus:
 def get_mnist_df():
     data = tfds.load('mnist', split='train')
     traindf = tfds.as_dataframe(data)
+    traindf = traindf.sample(n=1000)
     
     data = tfds.load('mnist', split='test')
     testdf = tfds.as_dataframe(data)
@@ -125,7 +126,7 @@ def get_covtype_df():
     traindf = traindf.loc[traindf['Cover_Type'].isin([1, 2]), :]
     label_mapping = {1: 0, 2: 1}
     traindf['Cover_Type'] = traindf['Cover_Type'].map(label_mapping)
-    traindf = traindf.rename(columns={'Cover_Type': "labels"})
+    traindf = traindf.rename(columns={'Cover_Type': "label"})
     
     testdf = traindf.sample(frac=testDataFrac, replace=False, random_state=1)
     traindf = traindf.drop(testdf.index)
@@ -212,9 +213,9 @@ def get_digitDG_df():
             for idx, (image, label) in enumerate(dataset):
                 image_data = np.array(image)  # Convert the PIL image to a NumPy array
                 records.append({
-                    'image': image_data,  # You can store the raw pixel values here
-                    'label': label,       # Store the corresponding label
-                    'domain': dataset_name  # The class name corresponding to the label
+                    'image': image_data,  
+                    'label': label,      
+                    'domain': dataset_name  
                 })
         return records
     

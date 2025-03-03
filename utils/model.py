@@ -156,9 +156,141 @@ class LeNet(nn.Module):
         return x
     
 
+class CIFAR10_CNNModel_SingleS(nn.Module):
+    def __init__(self):
+        super(CIFAR10_CNNModel_SingleS, self).__init__()
+        
+        weight_decay = 0.0001
+        
+        # First convolutional block (Conv2D + ReLU + MaxPooling2D + Dropout)
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)  # Conv2D(32, 3x3)
+        self.conv2 = nn.Conv2d(32, 32, kernel_size=3, padding=1)  # Conv2D(32, 3x3)
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)       # MaxPool2D(2x2)
+        self.dropout1 = nn.Dropout(p=0.1)
+
+        # Second convolutional block (Conv2D + ReLU + MaxPooling2D + Dropout)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)  # Conv2D(64, 3x3)
+        self.conv4 = nn.Conv2d(64, 64, kernel_size=3, padding=1)  # Conv2D(64, 3x3)
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)       # MaxPool2D(2x2)
+        self.dropout2 = nn.Dropout(p=0.2)
+
+        # Third convolutional block (Conv2D + ReLU + MaxPooling2D + Dropout)
+        self.conv5 = nn.Conv2d(64, 128, kernel_size=3, padding=1) # Conv2D(128, 3x3)
+        self.conv6 = nn.Conv2d(128, 128, kernel_size=3, padding=1)# Conv2D(128, 3x3)
+        self.pool3 = nn.MaxPool2d(kernel_size=2, stride=2)       # MaxPool2D(2x2)
+        self.dropout3 = nn.Dropout(p=0.3)
+
+        # Fourth convolutional block (Conv2D + ReLU + MaxPooling2D + Dropout)
+        self.conv7 = nn.Conv2d(128, 256, kernel_size=3, padding=1)# Conv2D(256, 3x3)
+        self.conv8 = nn.Conv2d(256, 256, kernel_size=3, padding=1)# Conv2D(256, 3x3)
+        self.pool4 = nn.MaxPool2d(kernel_size=2, stride=2)       # MaxPool2D(2x2)
+        self.dropout4 = nn.Dropout(p=0.4)
+
+        # Fully connected layers (FC layer + Softmax)
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(256 * 2 * 2, 10)  # The size 256*2*2 is derived after all pooling
+
+    def forward(self, x):
+        # Forward pass through layers
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = self.pool1(x)
+        x = self.dropout1(x)
+        
+        x = F.relu(self.conv3(x))
+        x = F.relu(self.conv4(x))
+        x = self.pool2(x)
+        x = self.dropout2(x)
+
+        x = F.relu(self.conv5(x))
+        x = F.relu(self.conv6(x))
+        x = self.pool3(x)
+        x = self.dropout3(x)
+
+        x = F.relu(self.conv7(x))
+        x = F.relu(self.conv8(x))
+        x = self.pool4(x)
+        x = self.dropout4(x)
+
+        # Flatten the output and pass through fully connected layer
+        x = self.flatten(x)
+        x = self.fc1(x)
+
+        return x
+
+
+class CIFAR100_CNNModel_SingleS(nn.Module):
+    def __init__(self):
+        super(CIFAR100_CNNModel_SingleS, self).__init__()
+
+        # First convolutional block (Conv2D + ReLU + LayerNorm + MaxPooling2D + Dropout)
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)  # Conv2D(64, 3x3)
+        self.norm1 = nn.LayerNorm([64, 32, 32])  # Layer normalization after Conv1
+        self.conv2 = nn.Conv2d(64, 64, kernel_size=3, padding=1)  # Conv2D(64, 3x3)
+        self.norm2 = nn.LayerNorm([64, 32, 32])  # Layer normalization after Conv2
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)  # MaxPool2D(2x2)
+        self.dropout1 = nn.Dropout(p=0.2)
+
+        # Second convolutional block (Conv2D + ReLU + LayerNorm + MaxPooling2D + Dropout)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)  # Conv2D(128, 3x3)
+        self.norm3 = nn.LayerNorm([128, 16, 16])  # Layer normalization after Conv3
+        self.conv4 = nn.Conv2d(128, 128, kernel_size=3, padding=1)  # Conv2D(128, 3x3)
+        self.norm4 = nn.LayerNorm([128, 16, 16])  # Layer normalization after Conv4
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)  # MaxPool2D(2x2)
+        self.dropout2 = nn.Dropout(p=0.3)
+
+        # Third convolutional block (Conv2D + ReLU + LayerNorm + MaxPooling2D + Dropout)
+        self.conv5 = nn.Conv2d(128, 256, kernel_size=3, padding=1)  # Conv2D(256, 3x3)
+        self.norm5 = nn.LayerNorm([256, 8, 8])  # Layer normalization after Conv5
+        self.conv6 = nn.Conv2d(256, 256, kernel_size=3, padding=1)  # Conv2D(256, 3x3)
+        self.norm6 = nn.LayerNorm([256, 8, 8])  # Layer normalization after Conv6
+        self.pool3 = nn.MaxPool2d(kernel_size=2, stride=2)  # MaxPool2D(2x2)
+        self.dropout3 = nn.Dropout(p=0.4)
+
+        # Fourth convolutional block (Conv2D + ReLU + LayerNorm + MaxPooling2D + Dropout)
+        self.conv7 = nn.Conv2d(256, 512, kernel_size=3, padding=1)  # Conv2D(512, 3x3)
+        self.norm7 = nn.LayerNorm([512, 4, 4])  # Layer normalization after Conv7
+        self.conv8 = nn.Conv2d(512, 512, kernel_size=3, padding=1)  # Conv2D(512, 3x3)
+        self.norm8 = nn.LayerNorm([512, 4, 4])  # Layer normalization after Conv8
+        self.pool4 = nn.MaxPool2d(kernel_size=2, stride=2)  # MaxPool2D(2x2)
+        self.dropout4 = nn.Dropout(p=0.5)
+
+        # Fully connected layers (FC layer + Softmax)
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(512 * 2 * 2, 100)  # The size 512*4*4 is derived after all pooling
+
+    def forward(self, x):
+        # Forward pass through layers with LayerNorm
+        x = F.relu(self.norm1(self.conv1(x)))
+        x = F.relu(self.norm2(self.conv2(x)))
+        x = self.pool1(x)
+        x = self.dropout1(x)
+
+        x = F.relu(self.norm3(self.conv3(x)))
+        x = F.relu(self.norm4(self.conv4(x)))
+        x = self.pool2(x)
+        x = self.dropout2(x)
+
+        x = F.relu(self.norm5(self.conv5(x)))
+        x = F.relu(self.norm6(self.conv6(x)))
+        x = self.pool3(x)
+        x = self.dropout3(x)
+
+        x = F.relu(self.norm7(self.conv7(x)))
+        x = F.relu(self.norm8(self.conv8(x)))
+        x = self.pool4(x)
+        x = self.dropout4(x)
+
+        # Flatten the output and pass through fully connected layer
+        x = self.flatten(x)
+        x = self.fc1(x)
+
+        return x
+
+
 
 batch_learning_model = {
-    "mnist": None, # add in later***
+    "mnist": LeNet(), # add in later***
     "cifar10": ResNet9(3,10),
     "cifar100": ResNet9(3,10),
     "tinyimagenet": resnet18,
@@ -166,3 +298,16 @@ batch_learning_model = {
     "pacs": PACSModel(input_shape=(3, 227, 227),num_classes=7),
     "digitdg": LeNet(10)
 }
+
+
+single_sample_learning_model = {
+    "mnist": LeNet(), 
+    "cifar10": CIFAR10_CNNModel_SingleS(),
+    "cifar100": CIFAR100_CNNModel_SingleS(),
+    "covtype": CovtypeNN(),
+    "pacs": PACSModel(input_shape=(3, 227, 227),num_classes=7),
+    "digitdg": LeNet(10)
+}
+
+
+

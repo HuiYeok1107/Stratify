@@ -353,22 +353,6 @@ def computePlaceholders(serialz_clients_enc_info):
         for i, (placeholder, noisyPlaceholderAmtProp) in enumerate(clientDecrypted_normalizedLabelProp.items()):
             clientsAvailPlaceholderTargets[client][i] = (placeholder, noisyPlaceholderAmtProp[0] - noises[placeholder])  # Assign decrypted normalized value back
 
-
-    # calculate the normalized label proportion for each client label
-    # for client, items in clientsAvailPlaceholderTargets.items():
-    #     noises = []
-    #     for i, (placeholder, placeholderAmt) in enumerate(items):
-    #         inverseTotal = 1 / sums[placeholder]
-    #         encNormalizedLabelProp = placeholderAmt * inverseTotal  # Normalize by dividing by the sum
-
-    #         res = requests.post(f'http://127.0.0.1:{basePort + int(client[1:])}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(encNormalizedLabelProp.serialize()), 'placeholder_to_target_mapping_stage': 'False'})
-    #         clientDecrypted_normalizedLabelProp = pickle.loads(res.content)[0]
-
-    #         # serialEncNormalizedLabelProp = encNormalizedLabelProp.serialize() # server serialized encrypted normalized value result and send to the respective client for decryption
-    #         # clientDecrypted_normalizedLabelProp = ts.ckks_vector_from(context, serialEncNormalizedLabelProp).decrypt()[0] # client decrypt encrypted result and send back to server
-
-    #         clientsAvailPlaceholderTargets[client][i] = (placeholder, clientDecrypted_normalizedLabelProp)  # Assign decrypted normalized value back
-
     return sums, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget
     
 
@@ -428,6 +412,7 @@ async def start_federated_learning(basePort):
     lr = args.lr
     weight_decay = args.weight_decay
     momentum = args.momentum
+    eps = args.eps
     clients = list(range(1, args.client_num + 1)) # replace range with actual clients address in production environment
     
     send_generateEncryptContext_request(clients) 
@@ -443,9 +428,9 @@ async def start_federated_learning(basePort):
         send_PlaceholderMapToRealLabel(client, mapping) 
     
     if args.optimizer == 'adam':
-        optimizer = optim.Adam(glb_model.parameters(), lr, weight_decay=weight_decay)  
+        optimizer = optim.Adam(glb_model.parameters(), lr, weight_decay=weight_decay, eps=eps)  
     elif args.optimizer == 'sgd':
-        optimizer = optim.SGD(glb_model.parameters(), lr, momentum=momentum)  
+        optimizer = optim.SGD(glb_model.parameters(), lr, momentum=momentum, weight_decay=weight_decay)  
     else:
         # log error ask user to add in other optimizer in code if required
         pass

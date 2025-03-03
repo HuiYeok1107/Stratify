@@ -1,87 +1,90 @@
+from args import args_parser
+global args
+args = args_parser()
+
+from fastapi import FastAPI, Response,  File, UploadFile
 import torch.multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import uvicorn
-from fastapi import FastAPI, Response,  File, UploadFile
-import pickle
+import httpx
+import psutil 
 
-from Model_Architecture.LeNet import *
-from nonIID_dataPartition import *
 import os 
-import signal
 from itertools import islice
+import pickle
+import signal
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from utils.data import dataset_train_test, dataset_transform, datasets_labels_count
+from utils.nonIIDPartition import *
+import utils.model
+from utils.model import single_sample_learning_model
+from utils.model_metrics import model_performance
 
 import numpy as np
+import torch
+import torch.nn as nn
 import torch.optim as optim
-
+from torch.utils.data import DataLoader, TensorDataset
 import tenseal as ts 
-
-device = torch.device('cuda')
-
-model = LeNet()
-optimizer = optim.Adam(model.parameters(), lr=0.0001, eps=1e-6)
-criterion = nn.CrossEntropyLoss()  # Equivalent to sparse_categorical_crossentropy        
-
-epoch_total_correct = 0
-epoch_total_samples = 0
-train_losses = [] 
-train_labels = []
-train_preds = []
-
 context = None
-PlaceholderMaptoRealTarget = None ##
 
-def create_flask_app(rank, port, clientTrainData, clientTestData, clientTrainLabelDataCount):
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = single_sample_learning_model[args.dataset]
+lr = args.lr
+weight_decay = args.weight_decay
+momentum = args.momentum
+eps = args.eps
+
+if args.optimizer == 'adam':
+    optimizer = optim.Adam(model.parameters(), lr=lr, eps=eps, weight_decay=weight_decay)
+elif args.optimizer == 'sgd':
+        optimizer = optim.SGD(model.parameters(), lr, momentum=momentum, weight_decay=weight_decay)  
+else:
+    # log error ask user to add in other optimizer in code if required
+    pass
+criterion = nn.CrossEntropyLoss()     
+
+train_losses, train_labels, train_preds = [], [], []
+PlaceholderMaptoRealTarget = None
+
+
+def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, clientTrainLabelDataCount):
     app = FastAPI() 
-
-    @app.route('/federatedLearningCompleted', methods=['POST'])
-    def federatedLearningCompleted():
-        os.kill(os.getpid(), signal.SIGINT)
-
     trainDataByLabels = {}
     testData = clientTestData
 
+    @app.post('/federatedLearningCompleted')
+    def federatedLearningCompleted():
+        os.kill(os.getpid(), signal.SIGINT)
 
-    def preprocess_trainImage(img):
-        # transform_train = transforms.Compose([
-        #     transforms.ToPILImage(),
-        #     transforms.RandomCrop(32, padding=4, padding_mode='reflect'),
-        #     transforms.RandomHorizontalFlip(),
-        #     transforms.ToTensor(),
-        #     transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
-        # ])
-        # transformed_img = transform_train(img)
-        transformed_img = img / 255.0
-        return transformed_img
 
-    def preprocess_testImage(img):
-        # transform_test = transforms.Compose([
-        #     transforms.ToPILImage(),
-        #     transforms.ToTensor(),
-        #     transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
-        # ])
-        # transformed_img = transform_test(img)
-        transformed_img = img / 255.0
-        return transformed_img
-    
-    # change name to start of new epoch & get batch size from server
     @app.post('/prepareTrainData')
-    def prepare_trainData():
+    async def prepare_trainData():
         clientData_copy = clientTrainData.copy()
-        clientData_copy['images'] = clientData_copy['images'].apply(preprocess_trainImage)
-        # convert client data by label to each data-label generator
-        for label in clientData_copy['labels'].unique():
-            trainDataByLabels[label] = iter(clientData_copy.loc[clientData_copy['labels'] == label, ['images', 'labels']].sample(frac=1, replace=False).itertuples(index=False, name=None))
+        clientData_copy['image'] = clientData_copy['image'].apply(lambda img: dataset_transform[args.dataset](img, train=True, augment=True if args.augmentation == 1 else False))
+        if args.dataset in ['mnist', 'cifar10', 'cifar100', 'tinyimagenet', 'pacs', 'digitdg']:
+            for label in clientData_copy['label'].unique():
+                trainDataByLabels[label] = iter(clientData_copy.loc[clientData_copy['label'] == label, ['image', 'label']].sample(frac=1, replace=False).itertuples(index=False, name=None))
+        else:
+            labels = clientData_copy['label'].unique()
+            for label in labels:
+                rows = clientData_copy.loc[clientData_copy['label'] == label].drop(columns=['label']).values
+                trainDataByLabels[label] = iter([(torch.tensor(row), torch.tensor(label)) for row in rows])
         
         return {"message": f"Train data is ready by process {rank}"}
 
-    def prepare_testData():
-        # global testData
-        testData['images'] = testData['images'].apply(preprocess_testImage)
-    
-    prepare_testData()
 
-    @app.route('/generateEncryptContext', methods=['POST']) ##
+    def prepare_testData():
+        testData['image'] = testData['image'].apply(lambda img: dataset_transform[args.dataset](img, train=False, augment=False))
+
+    if args.dataset in ['mnist', 'cifar10', 'cifar100', 'tinyimagenet', 'pacs', 'digitdg']:
+        prepare_testData()
+
+
+    @app.post('/generateEncryptContext') 
     async def generate_EncryptContext(clients: UploadFile = File(...)):
         global context 
 
@@ -91,18 +94,15 @@ def create_flask_app(rank, port, clientTrainData, clientTestData, clientTrainLab
         
         clientsSerialzContext = context.serialize(save_secret_key=True) # all clients need to use the same context for the server to perform operations on compatible encrypted contents
         serverSerialzContext = context.serialize(save_secret_key=True) # context without secret key so that the server will not be able to decrypt the clients encrypted contents but with the context to perform operations on the encrypted contents
-        
-        clientsAddrs = pickle.loads(await clients.read())
 
+        clientsAddrs = pickle.loads(await clients.read())
         with ThreadPoolExecutor() as executor: 
-            futures = [executor.submit(lambda client: requests.post(f'http://127.0.0.1:{5000 + int(client)}/receiveEncryptContext', files={"serialized_client_context": clientsSerialzContext}), client) for client in clientsAddrs] ##
+            futures = [executor.submit(lambda client: requests.post(f'http://127.0.0.1:{base_port - 1 + int(client)}/receiveEncryptContext', files={"serialized_client_context": clientsSerialzContext}), client) for client in clientsAddrs] ##
 
             for future in as_completed(futures):
                 response = future.result()
-                print(response.json())
 
-        # return jsonify({"message": "Encryption Context Generated.", "serialized_server_context": serverSerialzContext}), 200
-        return Response(serverSerialzContext, content_type='application/octet-stream')
+        return Response(serverSerialzContext, media_type='application/octet-stream')
     
 
     @app.post('/receiveEncryptContext') 
@@ -111,14 +111,23 @@ def create_flask_app(rank, port, clientTrainData, clientTestData, clientTrainLab
         context = ts.context_from(await serialized_client_context.read(), n_threads=2)
         return {"message": "received context"}
     
-    
 
     @app.post('/decryptIntermediateComparisonResult') 
-    async def decryptComparisonResult(enc_comparison_val: UploadFile = File(...)):
+    async def decryptComparisonResult(enc_comparison_val: UploadFile = File(...), mapping_stage: UploadFile = File(...)):
         global context
-        encComparisonValue = ts.ckks_vector_from(context, pickle.loads(await enc_comparison_val.read()))
-        comparisonValue = encComparisonValue.decrypt()
-        return Response(pickle.dumps(comparisonValue), content_type='application/octet-stream')
+        placeh_mapping_stage = await mapping_stage.read()
+        # set comparison value as 0 or 1 during placeholder mapping stage to avoid malicious server from using the minus result to infer the real label a client holds
+        if placeh_mapping_stage.decode() == 'True':
+            intermediateRes = ts.ckks_vector_from(context, pickle.loads(await enc_comparison_val.read())).decrypt() 
+            if abs(intermediateRes[0]) < 1e-5: 
+                intermediateRes = 0
+            else:
+                intermediateRes = 1
+        else:
+            intermediateRes = pickle.loads(await enc_comparison_val.read())
+            for p, noisyEncValue in intermediateRes.items():
+                intermediateRes[p] = ts.ckks_vector_from(context, noisyEncValue).decrypt()
+        return Response(pickle.dumps(intermediateRes), media_type='application/octet-stream')
 
 
     @app.post('/encryptLabels') 
@@ -141,7 +150,7 @@ def create_flask_app(rank, port, clientTrainData, clientTestData, clientTrainLab
 
 
     @app.post('/currentGlobalModelParams')
-    async def currentGlobalModelParams():
+    async def currentGlobalModelParams(glb_model_params: UploadFile = File(...)):
         global model
         serializ_glb_model_params = await glb_model_params.read()
         glb_model_params = pickle.loads(serializ_glb_model_params)
@@ -149,54 +158,12 @@ def create_flask_app(rank, port, clientTrainData, clientTestData, clientTrainLab
         return {"message": "Model updated with latest global parameters."}
 
 
-    def model_performance(labels, preds, totalTargetClass):
-        conf_matrix = np.zeros((totalTargetClass, totalTargetClass), dtype=int)
-        for pred, label in zip(preds, labels):
-            conf_matrix[label, pred] += 1
-
-        # Initialize lists to store precision, recall, and F1 scores for each class
-        precision_per_class = []
-        recall_per_class = []
-        f1_per_class = []
-
-        # Calculate metrics for each class
-        for i in range(conf_matrix.shape[0]):
-            TP = conf_matrix[i, i]  # True Positives
-            FP = conf_matrix[:, i].sum() - TP  # False Positives
-            FN = conf_matrix[i, :].sum() - TP  # False Negatives
-
-            # Precision: TP / (TP + FP)
-            precision = TP / (TP + FP) if (TP + FP) > 0 else 0.0
-
-            # Recall: TP / (TP + FN)
-            recall = TP / (TP + FN) if (TP + FN) > 0 else 0.0
-
-            # F1-Score: 2 * (Precision * Recall) / (Precision + Recall)
-            f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-
-            # Append results
-            precision_per_class.append(precision)
-            recall_per_class.append(recall)
-            f1_per_class.append(f1)
-
-        total_correct = conf_matrix.diagonal().sum()  # Sum of all true positives
-        total_samples = conf_matrix.sum()  # Total number of predictions
-        normal_accuracy = total_correct / total_samples if total_samples > 0 else 0.0
-
-        # Calculate Macro-Averaged Precision, Recall, and F1
-        macro_precision = np.mean([p for p in precision_per_class if p != 0])
-        macro_balanceAcc = np.mean([r for r in recall_per_class if r != 0])
-        macro_f1 = np.mean([f for f in f1_per_class if f != 0])
-
-        return conf_matrix, precision_per_class, recall_per_class, f1_per_class, normal_accuracy, macro_precision, macro_balanceAcc, macro_f1
-
-
-    @app.route('/test', methods=['POST'])
-    def test():
+    @app.post('/test')
+    async def test():
         # global model
-        global model, epoch_total_correct, epoch_total_samples, train_losses, train_labels, train_preds
+        global model, train_losses, train_labels, train_preds
 
-        glbModelParam = pickle.loads(requests.get('http://127.0.0.1:5000/get_glb_params').content)
+        glbModelParam = pickle.loads(requests.get(f'http://127.0.0.1:{base_port - 1}/get_glb_params').content)
         model.load_state_dict(glbModelParam)
         model.eval()
         
@@ -205,67 +172,91 @@ def create_flask_app(rank, port, clientTrainData, clientTestData, clientTrainLab
         test_preds = []
         total = len(testData)
         correct = 0
+
+        if args.dataset in ['mnist', 'cifar10', 'cifar100', 'tinyimagenet', 'pacs', 'digitdg']:
+            inputs = torch.stack(testData['image'].tolist()).float()
+            labels = torch.tensor(testData['label'].values)
+        else:
+            inputs = torch.from_numpy(testData.drop(columns=['labels']).values).float()
+            labels = torch.from_numpy(testData['labels'].values).long()
+
+        test_loader = DataLoader(TensorDataset(inputs, labels), batch_size=128, shuffle=False)
         with torch.no_grad():
-            for i in range(len(testData)):
-                input = torch.from_numpy(testData.iloc[i]['images']).permute(2, 0, 1).unsqueeze(0).float().to(device)
-                label = torch.tensor([testData.iloc[i]['labels']]).to(device)
-                pred = model(input)
-                _, predicted = pred.max(1)
-                correct += predicted.eq(label).sum().item()
-                test_losses.append(criterion(pred, torch.tensor([label]).to(device)).item())
-                test_labels.append(label.item())
-                test_preds.append(predicted.item())
+            for inputs, labels in test_loader:
+                inputs, labels = inputs.to(device), labels.to(device)
+                preds = model(inputs)
 
-
-        # epoch_testAcc = 100. * correct / total
-        # epoch_trainAcc = 100. * epoch_total_correct / epoch_total_samples
-
-        # # reset train accuracy trackers back to 0
-        # epoch_total_correct = 0
-        # epoch_total_samples = 0 
+                _, predicted = preds.max(1)
+                correct += predicted.eq(labels).sum().item()
+                test_losses.append(criterion(preds, labels).item())
+                test_labels.append(labels.tolist())
+                test_preds.append(predicted.tolist())
+                
+        
+        conf_matrix, normal_accuracy, macro_avg_f1, weighted_f1, macro_avg_ba_allclasses, weighted_ba, total_train_size = model_performance(train_labels, train_preds, datasets_labels_count[args.dataset])    
+        test_conf_matrix, test_normal_accuracy, test_macro_avg_f1, test_weighted_f1, test_macro_avg_ba_allclasses, test_weighted_ba, total_test_size = model_performance(test_labels, test_preds, datasets_labels_count[args.dataset])  
+        
+        response_json = pickle.dumps({f"client {rank}": {
+                                    "train_conf_matrix": conf_matrix,
+                                    "train_normal_accuracy": normal_accuracy, 
+                                    "train_macro_avg_f1": macro_avg_f1, "train_weighted_f1": weighted_f1, 
+                                    "train_macro_avg_ba_allclasses": macro_avg_ba_allclasses, "train_weighted_ba": weighted_ba,
+                                    "Train avg loss": np.mean(train_losses),
+                                    "train_size": total_train_size,
+                                    "test_conf_matrix": test_conf_matrix,
+                                    "test_normal_accuracy": test_normal_accuracy, 
+                                    "test_macro_avg_f1": test_macro_avg_f1, "test_weighted_f1": test_weighted_f1, 
+                                    "test_macro_avg_ba_allclasses": test_macro_avg_ba_allclasses, "test_weighted_ba": test_weighted_ba,
+                                    "Test avg loss": np.mean(test_losses),
+                                    "test_size": total_test_size
+                                }})
+        
         train_losses = []
-        train_labels = []
-        train_preds = []
+        train_labels, train_preds = [], []
+        
+        return Response(response_json, media_type='application/octet-stream')
+    
 
-        conf_matrix, precision_per_class, recall_per_class, f1_per_class, accuracy, macro_precision, macro_balanceAcc, macro_f1 = model_performance(train_labels, train_preds, 10) ##num_classes
-        test_conf_matrix, test_precision_per_class, test_recall_per_class, test_f1_per_class, test_accuracy, test_macro_precision, test_macro_balanceAcc, test_macro_f1 = model_performance(test_labels, test_preds, 10) ##num_classes
-
-
-        # return jsonify({f"client {rank}": {"Train Acc": epoch_trainAcc, "test correct": correct, "test total": total, "Test Acc": epoch_testAcc}})
-        return jsonify({f"client {rank}": {"Train confusion matrix": conf_matrix.tolist(), 
-                                           "Train precision per class": precision_per_class, 
-                                           "Train recall per class": recall_per_class, 
-                                           "Train f1 per class": f1_per_class,
-                                           "Train accuracy": accuracy,
-                                           "Train macro precision": macro_precision,
-                                           "Train macro balanced accuracy": macro_balanceAcc,
-                                           "Train macro f1": macro_f1,
-                                           "Train avg loss": np.mean(train_losses),
-                                           "Test confusion matrix": test_conf_matrix.tolist(), 
-                                           "Test precision per class": test_precision_per_class, 
-                                           "Test recall per class": test_recall_per_class, 
-                                           "Test f1 per class": test_f1_per_class,
-                                           "Test accuracy": test_accuracy,
-                                           "Test macro precision": test_macro_precision,
-                                           "Test macro balanced accuracy": test_macro_balanceAcc,
-                                           "Test macro f1": test_macro_f1,
-                                           "Test avg loss": np.mean(test_losses),
-                                           }})
+        # conf_matrix, precision_per_class, recall_per_class, f1_per_class, accuracy, macro_precision, macro_balanceAcc, macro_f1 = model_performance(train_labels, train_preds, 10) ##num_classes
+        # test_conf_matrix, test_precision_per_class, test_recall_per_class, test_f1_per_class, test_accuracy, test_macro_precision, test_macro_balanceAcc, test_macro_f1 = model_performance(test_labels, test_preds, 10) ##num_classes
 
 
-    @app.route('/train', methods=['POST'])
-    def train():
+        # response_json =  pickle.dumps({f"client {rank}": {
+        #                                    "Train confusion matrix": conf_matrix.tolist(), 
+        #                                    "Train precision per class": precision_per_class, 
+        #                                    "Train recall per class": recall_per_class, 
+        #                                    "Train f1 per class": f1_per_class,
+        #                                    "Train accuracy": accuracy,
+        #                                    "Train macro precision": macro_precision,
+        #                                    "Train macro balanced accuracy": macro_balanceAcc,
+        #                                    "Train macro f1": macro_f1,
+        #                                    "Train avg loss": np.mean(train_losses),
+        #                                    "Test confusion matrix": test_conf_matrix.tolist(), 
+        #                                    "Test precision per class": test_precision_per_class, 
+        #                                    "Test recall per class": test_recall_per_class, 
+        #                                    "Test f1 per class": test_f1_per_class,
+        #                                    "Test accuracy": test_accuracy,
+        #                                    "Test macro precision": test_macro_precision,
+        #                                    "Test macro balanced accuracy": test_macro_balanceAcc,
+        #                                    "Test macro f1": test_macro_f1,
+        #                                    "Test avg loss": np.mean(test_losses),
+        #                                    }})
+        # train_losses = []
+        # train_labels, train_preds = [], []
+
+        # return Response(response_json, media_type='application/octet-stream')
+
+
+    @app.post('/train')
+    async def train(to_train: UploadFile = File(...), next_client: UploadFile = File(...)):
         global model, criterion, epoch_total_correct, epoch_total_samples, PlaceholderMaptoRealTarget, train_losses, train_labels, train_preds
         model.train().to(device)
         target_exhausted = []
         target_noTrain = []
 
-        print('in clinet train func')
         # receive target to train and next assigned client address from server
-        to_train = pickle.loads(request.files['to-train'].read())
-        nextClient = pickle.loads(request.files['next-client'].read())
-        print(f'to_train: {to_train}, nextClient: {nextClient}')
-
+        to_train = pickle.loads(await to_train.read())
+        nextClient = pickle.loads(await next_client.read())
         # train model on the target data required by the server in sequence 
         for targetPlaceholder in to_train:
             targetRealLabel = PlaceholderMaptoRealTarget[targetPlaceholder]
@@ -273,14 +264,12 @@ def create_flask_app(rank, port, clientTrainData, clientTestData, clientTrainLab
             if sample:
                 x, y = sample[0]
                 optimizer.zero_grad()
-                output = model(torch.from_numpy(x).permute(2, 0, 1).unsqueeze(0).float().to(device))
+                output = model(x.unsqueeze(0).float().to(device))
                 loss = criterion(output, torch.tensor([y]).to(device))
                 loss.backward()
                 optimizer.step()
 
                 _, predicted = torch.max(output, 1)
-                # epoch_total_correct = epoch_total_correct + (predicted == torch.tensor([y]).to(device)).sum().item()
-                # epoch_total_samples = epoch_total_samples + torch.tensor([y]).size(0)
                 train_labels.append(y)
                 train_preds.append(predicted.item())
                 train_losses.append(loss.item())
@@ -292,34 +281,77 @@ def create_flask_app(rank, port, clientTrainData, clientTestData, clientTrainLab
         
         # send updated model param to next assigned client
         serialz_glb_model_params = pickle.dumps(model.state_dict())
-        requests.post(f'http://127.0.0.1:{5000 + int(nextClient[1:])}/currentGlobalModelParams', data={'global_model_params': serialz_glb_model_params})
 
+        async with httpx.AsyncClient() as client:
+            res = await client.post(f'http://127.0.0.1:{base_port - 1 + int(nextClient[1:])}/currentGlobalModelParams', files={'glb_model_params': serialz_glb_model_params})
+        
         # return target exhausted and target no train list back to server
         return {'target exhausted': list(set(target_exhausted)), 'target no train': target_noTrain}
-    
 
     # Start the Flask app on the assigned port
     uvicorn.run(app, port=port)  
 
 
-def start_training_process(rank, port, clientTrainData, clientTestData, clientTrainLabelDataCount):
+def start_training_process(base_port, rank, port, clientTrainData, clientTestData, clientTrainLabelDataCount):
+    print(f"port: {port}, unique labels: {clientTrainData['label'].unique()}, {clientTrainLabelDataCount}")
     print(f"Process {rank} started. Running Flask app on port {port}")
-    create_flask_app(rank, port, clientTrainData, clientTestData, clientTrainLabelDataCount)
+    print(f'process id: {os.getpid()}, {os.getppid()}')
+    # set_cpu_affinity(cpu_aff_c)
+    pid = os.getpid()
+    process = psutil.Process(pid)
+    current_affinity = process.cpu_affinity()
+    process.cpu_affinity(current_affinity[rank:rank+1]) # [rank:rank+1] in hpc
+
+    print(os.system('taskset -cp %s' %os.getpid()))
+    create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, clientTrainLabelDataCount)
 
 
 if __name__ == "__main__":
-    num_processes = 20 # total clients
-    base_port = 5001  # Starting port
-    mp.set_start_method('spawn', force=True)
+    total_clients = args.client_num # total clients
+    base_port = args.start_port + 1 # client starting port (server port + 1)
+    labelOrDomain_per_client = args.labelOrDomainPerClientHold
+    dataset = args.dataset
+    
+    train_df, test_df, total_labels = dataset_train_test[dataset]() 
+    
+    if args.dataset in ['pacs', 'digitdg']:
+        total_domains = 4
+        if labelOrDomain_per_client != 0:
+            clientsNonIIDDomains =  assignClientDomain(total_domains, labelOrDomain_per_client, total_clients, total_labels)
+            clients_traindf, clientsTrainLabelDataCount = domainHold_nonIID_partition(train_df, clientsNonIIDDomains)
+            clients_testdf, clientsTestDataCount = domainHold_nonIID_partition(test_df, clientsNonIIDDomains)
+        else:
+            dirProp = []
+            for i in range(total_domains):    
+                dirProp.append(np.random.dirichlet([0.5] * total_clients))
+
+            clients_traindf, clientsTrainLabelDataCount = dirichlet_nonIID_domain_partition(train_df, dirProp, num_clients=total_clients)
+            clients_testdf, clientsTestDataCount = dirichlet_nonIID_domain_partition(test_df, dirProp, num_clients=total_clients)
+                
+    else:
+        if labelOrDomain_per_client != 0:
+            clientsNonIIDLabels = assignClientLabel(total_labels, labelOrDomain_per_client, total_clients)
+            clients_traindf, clientsTrainLabelDataCount = classHold_nonIID_partition(train_df, clientsNonIIDLabels)
+            clients_testdf, clientsTestDataCount = classHold_nonIID_partition(test_df, clientsNonIIDLabels)
+        else:
+            dirProp = []
+            for i in range(total_labels):    
+                dirProp.append(np.random.dirichlet([0.5] * total_clients))
+            
+            clients_traindf, clientsTrainLabelDataCount = dirichlet_nonIID_label_partition(train_df, dirProp, num_clients=total_clients)
+            clients_testdf, clientsTestDataCount = dirichlet_nonIID_label_partition(test_df, dirProp, num_clients=total_clients)
+        
+    print(clientsTrainLabelDataCount)
+    print(clientsTestDataCount)
+    mp.set_start_method('spawn', force=True)    
 
     # Spawn multiple processes, each with its own Flask app
     processes = []
-    for rank in range(num_processes):
+    for rank in range(total_clients):
         port = base_port + rank
-        p = mp.Process(target=start_training_process, args=(rank, port, clients_traindf[rank], clients_testdf[rank], clientsTrainLabelDataCount[rank]))
+        p = mp.Process(target=start_training_process, args=(base_port, rank, port, clients_traindf[rank], clients_testdf[rank], clientsTrainLabelDataCount[rank]))
         p.start()
         processes.append(p)
 
-    # Optionally join processes (this will block the main process)
     for p in processes:
         p.join()

@@ -119,18 +119,17 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         return {'message': "received placeholder to real label maps"}
     
 
-    # change name to start of new epoch & get batch size from server
     @app.post('/prepareTrainData')
     async def prepare_trainData():
         clientData_copy = clientTrainData.copy()
-        clientData_copy['image'] = clientData_copy['image'].apply(lambda img: dataset_transform[args.dataset](img, train=True, augment=True))
+        clientData_copy['image'] = clientData_copy['image'].apply(lambda img: dataset_transform[args.dataset](img, train=True, augment=True if args.augmentation == 1 else False))
         if args.dataset in ['mnist', 'cifar10', 'cifar100', 'tinyimagenet', 'pacs', 'digitdg']:
             for label in clientData_copy['label'].unique():
                 trainDataByLabels[label] = iter(clientData_copy.loc[clientData_copy['label'] == label, ['image', 'label']].sample(frac=1, replace=False).itertuples(index=False, name=None))
         else:
-            labels = clientData_copy['labels'].unique()
+            labels = clientData_copy['label'].unique()
             for label in labels:
-                rows = clientData_copy.loc[clientData_copy['labels'] == label].drop(columns=['labels']).values
+                rows = clientData_copy.loc[clientData_copy['label'] == label].drop(columns=['label']).values
                 trainDataByLabels[label] = iter([(torch.tensor(row), torch.tensor(label)) for row in rows])
         
         return {"message": f"Train data is ready by process {rank}"}
@@ -246,7 +245,9 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         os.kill(os.getpid(), signal.SIGTERM)
         return 'client connection closed.'   
     
-    prepare_testData()
+    if args.dataset in ['mnist', 'cifar10', 'cifar100', 'tinyimagenet', 'pacs', 'digitdg']:
+        prepare_testData()
+
     uvicorn.run(app, port=port)  # Start the app on the assigned port
 
 
