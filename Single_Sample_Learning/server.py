@@ -374,14 +374,11 @@ async def start_federated_learning():
                     data=buffer.getvalue()
                 )
                 buffer.close() 
-                res = await send_localTrain_request(current_client['assigned_client'], current_client['target_to_train'], current_client['next_assigned_client'])
-                target_to_remove = res['target exhausted']
-                target_data_noTrain = res['target no train']
                 firstClient = False
-            else:
-                res = await send_localTrain_request(current_client['assigned_client'], current_client['target_to_train'], current_client['next_assigned_client'])
-                target_to_remove = res['target exhausted']
-                target_data_noTrain = res['target no train']
+            
+            res = await send_localTrain_request(current_client['assigned_client'], current_client['target_to_train'], current_client['next_assigned_client'])
+            target_to_remove = res['target exhausted']
+            target_data_noTrain = res['target no train']
 
 
             if target_to_remove:

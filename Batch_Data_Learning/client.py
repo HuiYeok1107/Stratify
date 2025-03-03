@@ -8,6 +8,7 @@ import requests
 import uvicorn
 from fastapi import FastAPI, Response,  File, UploadFile
 import psutil
+import io
 
 import tenseal as ts
 import torch
@@ -234,10 +235,15 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
 
         # get the grad of summed loss
         grad = torch.autograd.grad(loss, local_model.parameters(), retain_graph=False)
-        serialz_grad = pickle.dumps(grad)
+
+        buffer = io.BytesIO()
+        torch.save(grad, buffer, _use_new_zipfile_serialization=False)
+        buffer.seek(0)
+        response = Response(buffer.getvalue(), media_type='application/octet-stream')
+        buffer.close()
 
         # return summed gradients to server
-        return Response(serialz_grad, media_type='application/octet-stream')
+        return response
     
     
     @app.post('/federatedLearningCompleted')

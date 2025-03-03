@@ -168,10 +168,7 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         model.load_state_dict(glbModelParam)
         model.eval()
         
-        test_losses = []
-        test_labels = []
-        test_preds = []
-        total = len(testData)
+        test_losses, test_labels, test_preds = [], [], []
         correct = 0
 
         if args.dataset in ['mnist', 'cifar10', 'cifar100', 'tinyimagenet', 'pacs', 'digitdg']:
@@ -212,40 +209,9 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
                                     "test_size": total_test_size
                                 }})
         
-        train_losses = []
-        train_labels, train_preds = [], []
+        train_losses, train_labels, train_preds = [], [], []
         
         return Response(response_json, media_type='application/octet-stream')
-    
-
-        # conf_matrix, precision_per_class, recall_per_class, f1_per_class, accuracy, macro_precision, macro_balanceAcc, macro_f1 = model_performance(train_labels, train_preds, 10) ##num_classes
-        # test_conf_matrix, test_precision_per_class, test_recall_per_class, test_f1_per_class, test_accuracy, test_macro_precision, test_macro_balanceAcc, test_macro_f1 = model_performance(test_labels, test_preds, 10) ##num_classes
-
-
-        # response_json =  pickle.dumps({f"client {rank}": {
-        #                                    "Train confusion matrix": conf_matrix.tolist(), 
-        #                                    "Train precision per class": precision_per_class, 
-        #                                    "Train recall per class": recall_per_class, 
-        #                                    "Train f1 per class": f1_per_class,
-        #                                    "Train accuracy": accuracy,
-        #                                    "Train macro precision": macro_precision,
-        #                                    "Train macro balanced accuracy": macro_balanceAcc,
-        #                                    "Train macro f1": macro_f1,
-        #                                    "Train avg loss": np.mean(train_losses),
-        #                                    "Test confusion matrix": test_conf_matrix.tolist(), 
-        #                                    "Test precision per class": test_precision_per_class, 
-        #                                    "Test recall per class": test_recall_per_class, 
-        #                                    "Test f1 per class": test_f1_per_class,
-        #                                    "Test accuracy": test_accuracy,
-        #                                    "Test macro precision": test_macro_precision,
-        #                                    "Test macro balanced accuracy": test_macro_balanceAcc,
-        #                                    "Test macro f1": test_macro_f1,
-        #                                    "Test avg loss": np.mean(test_losses),
-        #                                    }})
-        # train_losses = []
-        # train_labels, train_preds = [], []
-
-        # return Response(response_json, media_type='application/octet-stream')
 
 
     @app.post('/train')
@@ -268,12 +234,17 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
                 output = model(x.unsqueeze(0).float().to(device))
                 loss = criterion(output, torch.tensor([y]).to(device))
                 loss.backward()
+
+                if args.grad_clip > 0:
+                    torch.nn.utils.clip_grad_value_(model.parameters(), clip_value=args.grad_clip)
+
                 optimizer.step()
 
                 _, predicted = torch.max(output, 1)
                 train_labels.append(y)
                 train_preds.append(predicted.item())
                 train_losses.append(loss.item())
+
 
             else:
                 target_exhausted.append(targetPlaceholder)

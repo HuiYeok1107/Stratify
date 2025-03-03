@@ -16,6 +16,7 @@ def args_parser():
     parser.add_argument('--momentum', default=0.0, type=float, help="Momentum factor (only for SGD optimizer)")
     parser.add_argument('--eps', default=0, type=int, help="Epsilon value for optimizers like Adam")
     parser.add_argument('--lr_scheduler', default=0, type=int, help="Enable cyclical learning rate scheduler. 1: Yes 0: No.")
+    parser.add_argument('--grad_clip', default=0.0, type=float, help="Gradients clipping value")
 
     parser.add_argument('--resultFilePath', default='result.txt', type=str, help="The file to write model performance metrics on.")
     parser.add_argument('--start_port', default=5000, type=int, help="Starting port number. Each client will be assigned to each unique port, incrementing from this port.")

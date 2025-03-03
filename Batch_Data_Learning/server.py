@@ -7,6 +7,7 @@ import uvicorn
 from fastapi import FastAPI, Request, Response, File, UploadFile
 import httpx
 import requests
+import io
 
 import tenseal as ts 
 import torch
@@ -382,7 +383,8 @@ async def send_localTrain_request(serialz_glb_model_params, currentBatchSize, cl
             for client, placeholdersToTrain in clientsPlaceholdersBatch.items()
         ]
         responses = await asyncio.gather(*tasks)
-        clients_summed_gradients = [pickle.loads(response.content) for response in responses]
+        
+        clients_summed_gradients = [torch.load(io.BytesIO(response.content)) for response in responses]
     
     return clients_summed_gradients
 
@@ -471,9 +473,11 @@ async def start_federated_learning(basePort):
             # update global model with the average grads
             optimizer.zero_grad()
             for param, avg_grad in zip(glb_model.parameters(), avg_grads):
-                clipped_grad = torch.clamp(avg_grad, min=-0.01, max=0.01)
-                param.grad = clipped_grad
-                # param.grad = avg_grad
+                if args.grad_clip > 0:
+                    clipped_grad = torch.clamp(avg_grad, min=-args.grad_clip, max=args.grad_clip)
+                    param.grad = clipped_grad
+                else:
+                    param.grad = avg_grad
             optimizer.step()
             if args.lr_scheduler == 1:
                 lr_schedl.step()
