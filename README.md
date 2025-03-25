@@ -21,10 +21,11 @@ pip install -r requirements.txt
 Below are the command-line arguments you can use to customize the training process.
 | Argument       | Type   | Default  | Description |
 |---------------|--------|----------|-------------|
-| `dataset`   | `str`  | `mnist`  | Dataset to train on. Options: `mnist`, `cifar10`, `cifar100`, 'tinyimagenet (only for batch learning)`, `covtype`, `pacs`, `digitdg`. |
+| `dataset`   | `str`  | `mnist`  | Dataset to train on. Options: `mnist`, `cifar10`, `cifar100`, `tinyimagenet` (only for batch learning), `covtype`, `pacs`, `digitdg`. |
 | `labelOrDomainPerClientHold`   | `str`  | `0`  | Number of classes or domains each client holds. |
 | `dirichlet`   | `str`  | `0`  | Enable Dirichlet partition. 1: Yes 0: No. |
 | `client_num`   | `str`  | `5`  | Number of FL clients participate. |
+| `uniform_SLS`   | `str`  | 1 | Enable uniform ** SLS. 1: Yes 0: No.|
 | `epochs`    | `int`  | `30`     | Number of communication rounds or training epochs. |
 | `augmentation`    | `int`  | `0`  | Enable train data augmentation. 1: Yes 0: No. |
 | `batch_size` | `int` | `128`    | Batch size per iteration for batch learning. |
