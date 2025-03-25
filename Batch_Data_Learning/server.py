@@ -255,17 +255,30 @@ def computePlaceholders(serialz_clients_enc_info):
     for encTarget, encTargetAmt in list(itertools.chain(*clients_enc_info)):
         add_elem = True  
         if uniqueList:
-            for unique_elem in uniqueList:
-                enc_res = encTarget - unique_elem
-                # send the enc_res back to the client for decryption and get back the result
-                # serialized_enc_res = enc_res.serialize()
-                # client_decrypted_res = ts.ckks_vector_from(context, serialized_enc_res).decrypt()
-                res = requests.post(f'http://127.0.0.1:{basePort + 1}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(enc_res.serialize()), 'mapping_stage': 'True'})
-                client_decrypted_res = pickle.loads(res.content)
+            enc_res_list = [encTarget - unique_elem for unique_elem in uniqueList]
+            
+            serialized_data = pickle.dumps([vec.serialize() for vec in enc_res_list])
+    
+            res = requests.post(f'http://127.0.0.1:{basePort + 1}/decryptIntermediateComparisonResult', 
+                                files={'enc_comparison_val': serialized_data, 'mapping_stage': 'True'})
+    
+            decrypted_results = pickle.loads(res.content) 
+    
+            if 0 in decrypted_results:  
+                add_elem = False  
+                break
 
-                if client_decrypted_res == 0:  
-                    add_elem = False 
-                    break
+            # for unique_elem in uniqueList:
+            #     enc_res = encTarget - unique_elem
+            #     # send the enc_res back to the client for decryption and get back the result
+            #     # serialized_enc_res = enc_res.serialize()
+            #     # client_decrypted_res = ts.ckks_vector_from(context, serialized_enc_res).decrypt()
+            #     res = requests.post(f'http://127.0.0.1:{basePort + 1}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(enc_res.serialize()), 'mapping_stage': 'True'})
+            #     client_decrypted_res = pickle.loads(res.content)
+
+            #     if client_decrypted_res == 0:  
+            #         add_elem = False 
+            #         break
         if add_elem:
             # add a small encrypted value into the encrypted target to prevent transparent ciphertext issue in later comparison stage 
             encTarget = encTarget + ts.ckks_vector(context, [0.0000001]) 
