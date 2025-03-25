@@ -291,7 +291,7 @@ class CIFAR100_CNNModel_SingleS(nn.Module):
 batch_learning_model = {
     "mnist": LeNet(),
     "cifar10": ResNet9(3,10),
-    "cifar100": ResNet9(3,10),
+    "cifar100": ResNet9(3,100),
     "tinyimagenet": resnet18,
     "covtype": CovtypeNN(),
     "pacs": PACSModel(input_shape=(3, 227, 227),num_classes=7),

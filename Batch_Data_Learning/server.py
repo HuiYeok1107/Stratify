@@ -252,25 +252,56 @@ def computePlaceholders(clients, serialz_clients_enc_info):
         c_enc_info = [[ts.ckks_vector_from(context, encSerialTargetVector), ts.ckks_vector_from(context, encSerialTargetAmtVector)] for encSerialTargetVector, encSerialTargetAmtVector in serialz_client_enc_info]
         clients_enc_info.append(c_enc_info)
     
-    uniqueList = []
-    for encTarget, encTargetAmt in list(itertools.chain(*clients_enc_info)):
-        add_elem = True  
-        if uniqueList:
-            enc_res_list = [encTarget - unique_elem for unique_elem in uniqueList]
-            
-            serialized_data = pickle.dumps([vec.serialize() for vec in enc_res_list])
-    
-            res = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', 
-                                files={'enc_comparison_val': serialized_data, 'mapping_stage': 'True'})
-    
-            decrypted_results = pickle.loads(res.content) 
-            if 0 in decrypted_results:  
-                add_elem = False  
+    for layer in reversed(list(glb_model.modules())):
+        if hasattr(layer, 'out_features'):
+            total_class = layer.out_features
 
-        if add_elem:
-            # add a small encrypted value into the encrypted target to prevent transparent ciphertext issue in later comparison stage 
-            encTarget = encTarget + ts.ckks_vector(context, [0.0000001]) 
-            uniqueList.append(encTarget)
+    client_with_max_labels = max(clients_enc_info, key=len)
+    uniqueList = [encItem[0] + ts.ckks_vector(context, [0.0000001]) for encItem in client_with_max_labels]
+    remaining_clients_enc_info = [subl for subl in clients_enc_info if subl != client_with_max_labels]
+
+    for client_enc_info in remaining_clients_enc_info:
+        print(len(uniqueList))
+        pairwise_enc_results = {}
+        client_enc_labels = [encItem[0] for encItem in client_enc_info]
+        for i, client_enc_label in enumerate(client_enc_labels):
+            pairwise_enc_results[i] = [(client_enc_label - unique_elem).serialize() for unique_elem in uniqueList]
+        
+        pairwise_results = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', 
+                    files={'enc_comparison_val': pickle.dumps(pairwise_enc_results), 'mapping_stage': 'True'})
+        
+        pairwise_results = pickle.loads(pairwise_results.content) 
+        for i, pairwise_result in pairwise_results.items():
+            if 0 not in pairwise_result:
+                uniqueList.append(client_enc_labels[i] + ts.ckks_vector(context, [0.0000001]))
+        
+        if len(uniqueList) == total_class:
+            break
+    
+
+    # client_with_max_labels = max(clients_enc_info, key=len)
+    # uniqueList = [encItem[0] + ts.ckks_vector(context, [0.0000001]) for encItem in client_with_max_labels]
+
+    # for encTarget, encTargetAmt in list(itertools.chain(*(subl for subl in clients_enc_info if subl != client_with_max_labels))):
+    #     print(len(uniqueList))
+    #     add_elem = True  
+    #     if uniqueList:
+    #         enc_res_list = pickle.dumps([(encTarget - unique_elem).serialize() for unique_elem in uniqueList])
+    
+    #         res = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', 
+    #                             files={'enc_comparison_val': enc_res_list, 'mapping_stage': 'True'})
+    
+    #         decrypted_results = pickle.loads(res.content) 
+    #         if 0 in decrypted_results:  
+    #             add_elem = False  
+
+    #     if add_elem:
+    #         # add a small encrypted value into the encrypted target to prevent transparent ciphertext issue in later comparison stage 
+    #         encTarget = encTarget + ts.ckks_vector(context, [0.0000001]) 
+    #         uniqueList.append(encTarget)
+        
+    #     if len(uniqueList) == total_class:
+    #         break
     
     
     def generate_placeholders(limit):

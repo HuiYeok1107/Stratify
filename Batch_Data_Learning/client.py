@@ -106,7 +106,14 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
             else:
                 intermediateRes = {}
                 for p, compVal in intermediateCompVals.items():
-                    intermediateRes[p] = 0 if abs(ts.ckks_vector_from(context, compVal).decrypt()[0]) < 1e-5 else 1
+                    if isinstance(compVal, list):
+                        intermediateRes[p] = [
+                            0 if abs(ts.ckks_vector_from(context, val).decrypt()[0]) < 1e-5 else 1
+                            for val in compVal
+                        ]
+                    else:
+                        intermediateRes[p] = 0 if abs(ts.ckks_vector_from(context, compVal).decrypt()[0]) < 1e-5 else 1
+                # print(intermediateRes)
         else:
             intermediateRes = pickle.loads(await enc_comparison_val.read())
             for p, noisyEncValue in intermediateRes.items():
