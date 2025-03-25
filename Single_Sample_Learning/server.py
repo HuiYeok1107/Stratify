@@ -333,12 +333,10 @@ async def start_federated_learning():
     clients = list(range(1, args.client_num + 1))
 
     send_generateEncryptContext_request(clients) 
-
     serialz_clients_enc_info = []
-    for client in clients: 
-        response = requests.post(f'http://127.0.0.1:{basePort + int(client)}/encryptLabels')
-        serialz_client_enc_info = pickle.loads(response.content)
-        serialz_clients_enc_info.append(serialz_client_enc_info)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        results = list(executor.map(lambda client: pickle.loads(requests.post(f'http://127.0.0.1:{basePort + int(client)}/encryptLabels').content), clients))
+    serialz_clients_enc_info.extend(results)
 
     sums, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget = computePlaceholders(clients, serialz_clients_enc_info)
     for client, mapping in clientsPlaceholderTargetMapEncRealTarget.items():    

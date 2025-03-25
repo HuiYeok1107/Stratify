@@ -83,6 +83,16 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         return {"message": "received context"}
     
 
+    @app.post('/encryptLabels') 
+    async def encryptLabels():
+        global context
+        enc_info = []
+        for label, amount in clientTrainLabelDataCount.items():
+            enc_info.append([ts.ckks_vector(context, [label]).serialize(), ts.ckks_vector(context, [amount]).serialize()])
+        
+        return Response(pickle.dumps(enc_info), media_type='application/octet-stream')
+    
+
     @app.post('/decryptIntermediateComparisonResult') 
     async def decryptComparisonResult(enc_comparison_val: UploadFile = File(...), mapping_stage: UploadFile = File(...)):
         global context
@@ -101,18 +111,8 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
             intermediateRes = pickle.loads(await enc_comparison_val.read())
             for p, noisyEncValue in intermediateRes.items():
                 intermediateRes[p] = ts.ckks_vector_from(context, noisyEncValue).decrypt()
-                
+
         return Response(pickle.dumps(intermediateRes), media_type='application/octet-stream')
-
-
-    @app.post('/encryptLabels') 
-    async def encryptLabels():
-        global context
-        enc_info = []
-        for label, amount in clientTrainLabelDataCount.items():
-            enc_info.append([ts.ckks_vector(context, [label]).serialize(), ts.ckks_vector(context, [amount]).serialize()])
-        
-        return Response(pickle.dumps(enc_info), media_type='application/octet-stream')
 
 
     @app.post('/placeholderToRealLabelMapping') 

@@ -111,6 +111,16 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         global context
         context = ts.context_from(await serialized_client_context.read(), n_threads=2)
         return {"message": "received context"}
+
+
+    @app.post('/encryptLabels') 
+    async def encryptLabels():
+        global context
+        enc_info = []
+        for label, amount in clientTrainLabelDataCount.items():
+            enc_info.append([ts.ckks_vector(context, [label]).serialize(), ts.ckks_vector(context, [amount]).serialize()])
+        
+        return Response(pickle.dumps(enc_info), media_type='application/octet-stream')
     
 
     @app.post('/decryptIntermediateComparisonResult') 
@@ -133,16 +143,6 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
                 intermediateRes[p] = ts.ckks_vector_from(context, noisyEncValue).decrypt()
                 
         return Response(pickle.dumps(intermediateRes), media_type='application/octet-stream')
-
-
-    @app.post('/encryptLabels') 
-    async def encryptLabels():
-        global context
-        enc_info = []
-        for label, amount in clientTrainLabelDataCount.items():
-            enc_info.append([ts.ckks_vector(context, [label]).serialize(), ts.ckks_vector(context, [amount]).serialize()])
-        
-        return Response(pickle.dumps(enc_info), media_type='application/octet-stream')
 
 
     @app.post('/placeholderToRealLabelMapping') 

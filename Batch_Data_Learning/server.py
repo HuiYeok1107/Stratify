@@ -429,12 +429,11 @@ async def start_federated_learning(basePort):
     
     send_generateEncryptContext_request(clients) 
     serialz_clients_enc_info = []
-    for client in clients: # send the request using loop instead of threading because the server needs to know the encrypted label is sent from which client so that the assigned placeholder can be sent to the correct client in later stage
-        response = requests.post(f'http://127.0.0.1:{basePort + int(client)}/encryptLabels')
-        serialz_client_enc_info = pickle.loads(response.content)
-        serialz_clients_enc_info.append(serialz_client_enc_info)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        results = list(executor.map(lambda client: pickle.loads(requests.post(f'http://127.0.0.1:{basePort + int(client)}/encryptLabels').content), clients))
+    serialz_clients_enc_info.extend(results)
         
-    sums, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget = computePlaceholders(clients, serialz_clients_enc_info) ##
+    sums, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget = computePlaceholders(clients, serialz_clients_enc_info) 
     
     for client, mapping in clientsPlaceholderTargetMapEncRealTarget.items():    
         send_PlaceholderMapToRealLabel(client, mapping) 
