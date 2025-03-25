@@ -89,11 +89,14 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         placeh_mapping_stage = await mapping_stage.read()
         # set comparison value as 0 or 1 during placeholder mapping stage to avoid malicious server from using the minus result to infer the real label a client holds
         if placeh_mapping_stage.decode() == 'True':
-            intermediateRes = ts.ckks_vector_from(context, pickle.loads(await enc_comparison_val.read())).decrypt() 
-            if abs(intermediateRes[0]) < 1e-5: 
-                intermediateRes = 0
-            else:
-                intermediateRes = 1
+            intermediateRes = []
+            intermediateCompVals = pickle.loads(await enc_comparison_val.read())
+            intermediateCompVals = [0 if abs(ts.ckks_vector_from(context, intermediateCompVal).decrypt()[0]) < 1e-5 else 1 for intermediateCompVal in intermediateCompVals]
+            # intermediateRes = ts.ckks_vector_from(context, pickle.loads(await enc_comparison_val.read())).decrypt() 
+            # if abs(intermediateRes[0]) < 1e-5: 
+            #     intermediateRes = 0
+            # else:
+            #     intermediateRes = 1
         else:
             intermediateRes = pickle.loads(await enc_comparison_val.read())
             for p, noisyEncValue in intermediateRes.items():
