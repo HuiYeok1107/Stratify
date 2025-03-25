@@ -264,7 +264,6 @@ def computePlaceholders(clients, serialz_clients_enc_info):
                                 files={'enc_comparison_val': serialized_data, 'mapping_stage': 'True'})
     
             decrypted_results = pickle.loads(res.content) 
-            print(decrypted_results)
             if 0 in decrypted_results:  
                 add_elem = False  
 
