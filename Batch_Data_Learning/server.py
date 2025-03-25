@@ -44,7 +44,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # tenseal context
 context = None
-# Shared variable to accumulate tensors
+# variable to accumulate tensors
 overallBatchSum, overallBatchStdv = [], []
 batchMean, batchVar = None, None
 overallTerm2, overallPartTerm3 = [], []
@@ -240,7 +240,7 @@ def send_generateEncryptContext_request(clients):
     clonedClients.pop(randIdx)
 
     response = requests.post(f'http://127.0.0.1:{basePort + selectedClient}/generateEncryptContext', files={"clients": pickle.dumps(clonedClients)})
-    context = ts.context_from(response.content, n_threads=2)
+    context = ts.context_from(response.content, n_threads=4)
 
 
 def computePlaceholders(serialz_clients_enc_info):
