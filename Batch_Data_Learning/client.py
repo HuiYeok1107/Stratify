@@ -64,7 +64,7 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         context.global_scale = 2**40
         
         clientsSerialzContext = context.serialize(save_secret_key=True) # all clients need to use the same context for the server to perform operations on compatible encrypted contents
-        serverSerialzContext = context.serialize(save_secret_key=True) # context without secret key so that the server will not be able to decrypt the clients encrypted contents but with the context to perform operations on the encrypted contents
+        serverSerialzContext = context.serialize(save_secret_key=False) # context without secret key so that the server will not be able to decrypt the clients encrypted contents but with the context to perform operations on the encrypted contents
 
         clientsAddrs = pickle.loads(await clients.read())
         with ThreadPoolExecutor() as executor: 
