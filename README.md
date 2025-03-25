@@ -1,6 +1,6 @@
-# Fed-GT
+# Stratify
 This repository contains the implementation of the algorithms proposed in the paper:  
-**"Embrace Non-IID Data: Rethinking the Collaboration Approach in Federated Learning"** by []  
+**"Stratify: Rethinking Federated Learning for Non-IID Data through Balanced Sampling"** by []  
 📄 [Paper Link](#) 
 
 ## Installation
