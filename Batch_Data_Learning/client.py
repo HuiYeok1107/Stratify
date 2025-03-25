@@ -89,18 +89,19 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         placeh_mapping_stage = await mapping_stage.read()
         # set comparison value as 0 or 1 during placeholder mapping stage to avoid malicious server from using the minus result to infer the real label a client holds
         if placeh_mapping_stage.decode() == 'True':
-            intermediateRes = []
             intermediateCompVals = pickle.loads(await enc_comparison_val.read())
-            intermediateCompVals = [0 if abs(ts.ckks_vector_from(context, intermediateCompVal).decrypt()[0]) < 1e-5 else 1 for intermediateCompVal in intermediateCompVals]
-            # intermediateRes = ts.ckks_vector_from(context, pickle.loads(await enc_comparison_val.read())).decrypt() 
-            # if abs(intermediateRes[0]) < 1e-5: 
-            #     intermediateRes = 0
-            # else:
-            #     intermediateRes = 1
+            if isinstance(intermediateCompVals, list):
+                intermediateRes = []
+                intermediateRes = [0 if abs(ts.ckks_vector_from(context, intermediateCompVal).decrypt()[0]) < 1e-5 else 1 for intermediateCompVal in intermediateCompVals]
+            else:
+                intermediateRes = {}
+                for p, compVal in intermediateCompVals.items():
+                    intermediateRes[p] = 0 if abs(ts.ckks_vector_from(context, compVal).decrypt()[0]) < 1e-5 else 1
         else:
             intermediateRes = pickle.loads(await enc_comparison_val.read())
             for p, noisyEncValue in intermediateRes.items():
                 intermediateRes[p] = ts.ckks_vector_from(context, noisyEncValue).decrypt()
+                
         return Response(pickle.dumps(intermediateRes), media_type='application/octet-stream')
 
 
@@ -119,7 +120,7 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         global context, PlaceholderMaptoRealTarget
         serialized_mapping = pickle.loads(await mapping.read())
         PlaceholderMaptoRealTarget = {placeholder: round(ts.ckks_vector_from(context, encRealLabel).decrypt()[0]) for placeholder, encRealLabel in serialized_mapping.items()}
-        # print(f'port {port} placeholderMapReal: {PlaceholderMaptoRealTarget}')
+        print(f'port {port} placeholderMapReal: {PlaceholderMaptoRealTarget}')
         return {'message': "received placeholder to real label maps"}
     
 

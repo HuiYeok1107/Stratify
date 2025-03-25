@@ -415,6 +415,7 @@ async def start_federated_learning():
             # file.write(str(epoch_acc) + '\n')
             file.write(f"Epoch {epoch}:\n")
             file.write(epoch_avg_result)
+            file.write("\n")
         
         print(f'total train time: {et - st}')
             

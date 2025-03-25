@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, Response, File, UploadFile
 import httpx
 import requests
 import io
+import concurrent.futures
 
 import tenseal as ts 
 import torch
@@ -243,7 +244,7 @@ def send_generateEncryptContext_request(clients):
     context = ts.context_from(response.content, n_threads=4)
 
 
-def computePlaceholders(serialz_clients_enc_info):
+def computePlaceholders(clients, serialz_clients_enc_info):
     global context 
 
     clients_enc_info = []
@@ -259,26 +260,14 @@ def computePlaceholders(serialz_clients_enc_info):
             
             serialized_data = pickle.dumps([vec.serialize() for vec in enc_res_list])
     
-            res = requests.post(f'http://127.0.0.1:{basePort + 1}/decryptIntermediateComparisonResult', 
+            res = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', 
                                 files={'enc_comparison_val': serialized_data, 'mapping_stage': 'True'})
     
             decrypted_results = pickle.loads(res.content) 
-    
+            print(decrypted_results)
             if 0 in decrypted_results:  
                 add_elem = False  
-                break
 
-            # for unique_elem in uniqueList:
-            #     enc_res = encTarget - unique_elem
-            #     # send the enc_res back to the client for decryption and get back the result
-            #     # serialized_enc_res = enc_res.serialize()
-            #     # client_decrypted_res = ts.ckks_vector_from(context, serialized_enc_res).decrypt()
-            #     res = requests.post(f'http://127.0.0.1:{basePort + 1}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(enc_res.serialize()), 'mapping_stage': 'True'})
-            #     client_decrypted_res = pickle.loads(res.content)
-
-            #     if client_decrypted_res == 0:  
-            #         add_elem = False 
-            #         break
         if add_elem:
             # add a small encrypted value into the encrypted target to prevent transparent ciphertext issue in later comparison stage 
             encTarget = encTarget + ts.ckks_vector(context, [0.0000001]) 
@@ -302,33 +291,41 @@ def computePlaceholders(serialz_clients_enc_info):
     
     placeholders = generate_placeholders(200)
     random.shuffle(placeholders)
-    
+
     placeholderTargetMapEncRealTarget = {placeholderKey: encTarget for placeholderKey, encTarget in zip(placeholders, uniqueList)}
     clientsAvailPlaceholderTargets = {}
     # placeholder to encrypted real label mapping for each client to convert the placeholder to train from server to the corresponding real label to train
     clientsPlaceholderTargetMapEncRealTarget = {}
 
-    for clientID, clientEncTargetTargetAmtVectors in list(zip(['c' + str(num) for num in range(1, len(clients_enc_info)+1)], clients_enc_info)):   
+    def process_client(clientID, clientEncTargetTargetAmtVectors):
         clientsAvailPlaceholderTargets[clientID] = []
         clientsPlaceholderTargetMapEncRealTarget[clientID] = {}
         placeholderTargetMapEncRealTargetCopy = placeholderTargetMapEncRealTarget.copy()
+
         for clientEncTargetTargetAmtVector in clientEncTargetTargetAmtVectors:
-            for placeholder, encRealTargetInUniqueList in placeholderTargetMapEncRealTargetCopy.items():
-                # print('placeder map to target length:')
-                # print(len(placeholderTargetMapEncRealTarget))
-                # print(len(placeholderTargetMapEncRealTargetCopy))
-                enc_res = clientEncTargetTargetAmtVector[0] - encRealTargetInUniqueList
-                # Server sends the enc_res back to the client for decryption and get back the comparison result
-                # client_decrypted_res = enc_res.decrypt()
+            # Prepare encrypted comparisons
+            enc_res = {placeholder: (clientEncTargetTargetAmtVector[0] - encRealTargetInUniqueList).serialize() 
+                    for placeholder, encRealTargetInUniqueList in placeholderTargetMapEncRealTargetCopy.items()}
 
-                res = requests.post(f'http://127.0.0.1:{basePort + int(clientID[1:])}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(enc_res.serialize()), 'mapping_stage': 'True'})
-                client_decrypted_res = pickle.loads(res.content)
+            # Send request concurrently
+            res = requests.post(
+                f'http://127.0.0.1:{basePort + int(clientID[1:])}/decryptIntermediateComparisonResult', 
+                files={'enc_comparison_val': pickle.dumps(enc_res), 'mapping_stage': 'True'}
+            )
+            client_decrypted_res = pickle.loads(res.content)
 
-                if client_decrypted_res == 0:
-                    clientsAvailPlaceholderTargets[clientID].append((placeholder, clientEncTargetTargetAmtVector[1]))   # for server to keep track the available placeholders of client
+            for placeholder, r in client_decrypted_res.items():
+                if r == 0:
+                    clientsAvailPlaceholderTargets[clientID].append((placeholder, clientEncTargetTargetAmtVector[1])) # for server to keep track the available placeholders of client
                     clientsPlaceholderTargetMapEncRealTarget[clientID][placeholder] = clientEncTargetTargetAmtVector[0] # placeholder-to-encRealLabel map
                     del placeholderTargetMapEncRealTargetCopy[placeholder]
-                    break   
+                    break
+
+    # Run concurrent requests using threads
+    client_ids = ['c' + str(client) for client in clients]
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        executor.map(process_client, client_ids, clients_enc_info) 
+
 
     # global counts
     sums = {}
@@ -341,11 +338,11 @@ def computePlaceholders(serialz_clients_enc_info):
     noises = {}
     for placeholder, encPlaceholderSum in sums.items():
         # server adds random value to encrypted global count, serialized sum vector and send to client for decryption 
-        noise = random.randint(100, 1000)
+        noise = random.randint(126, 5234)
         noises[placeholder] = noise
         sums[placeholder] = (encPlaceholderSum + noise).serialize()
 
-    res = requests.post(f'http://127.0.0.1:{basePort + int(clientID[1:])}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(sums), 'mapping_stage': 'False'})
+    res = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(sums), 'mapping_stage': 'False'})
     res = pickle.loads(res.content)
     for placeholder, placeholderGlobalSum in res.items():
         clientDecrypted_placeholderSum = placeholderGlobalSum[0] - noises[placeholder]
@@ -437,7 +434,7 @@ async def start_federated_learning(basePort):
         serialz_client_enc_info = pickle.loads(response.content)
         serialz_clients_enc_info.append(serialz_client_enc_info)
         
-    sums, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget = computePlaceholders(serialz_clients_enc_info) ##
+    sums, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget = computePlaceholders(clients, serialz_clients_enc_info) ##
     
     for client, mapping in clientsPlaceholderTargetMapEncRealTarget.items():    
         send_PlaceholderMapToRealLabel(client, mapping) 
