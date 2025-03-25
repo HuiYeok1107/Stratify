@@ -6,8 +6,8 @@ This repository contains the implementation of the algorithms proposed in the pa
 ## Installation
 ```bash
 # Clone the repository
-git clone https://github.com/huiyeok1107/Fed-GT.git
-cd Fed-GT
+git clone https://github.com/huiyeok1107/Stratify.git
+cd Statify
 
 # Create a virtual environment 
 python -m venv venv
