@@ -38,12 +38,13 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["TBB_NUM_THREADS"] = "1" 
 torch.set_num_threads(1) 
 
-local_model = batch_learning_model[args.dataset]# initialise local model
+local_model = batch_learning_model[args.dataset] # initialise local model
 criterion = nn.CrossEntropyLoss(reduction='sum')
-device = torch.device('cuda')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 context = None
 PlaceholderMaptoRealTarget = None 
+samples = []
 batchSize = 0
 train_losses = 0
 train_labels = []
@@ -97,23 +98,23 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
     async def decryptComparisonResult(enc_comparison_val: UploadFile = File(...), mapping_stage: UploadFile = File(...)):
         global context
         placeh_mapping_stage = await mapping_stage.read()
+        placeh_mapping_stage = placeh_mapping_stage.decode() 
         # set comparison value as 0 or 1 during placeholder mapping stage to avoid malicious server from using the minus result to infer the real label a client holds
-        if placeh_mapping_stage.decode() == 'True':
+        if placeh_mapping_stage in ['s1', 's2']:
+            print(placeh_mapping_stage)
             intermediateCompVals = pickle.loads(await enc_comparison_val.read())
-            if isinstance(intermediateCompVals, list):
-                intermediateRes = []
-                intermediateRes = [0 if abs(ts.ckks_vector_from(context, intermediateCompVal).decrypt()[0]) < 1e-5 else 1 for intermediateCompVal in intermediateCompVals]
-            else:
+            if placeh_mapping_stage == 's1':
                 intermediateRes = {}
-                for p, compVal in intermediateCompVals.items():
+                for k, compVal in intermediateCompVals.items():
                     if isinstance(compVal, list):
-                        intermediateRes[p] = [
+                        intermediateRes[k] = [
                             0 if abs(ts.ckks_vector_from(context, val).decrypt()[0]) < 1e-5 else 1
                             for val in compVal
                         ]
-                    else:
-                        intermediateRes[p] = 0 if abs(ts.ckks_vector_from(context, compVal).decrypt()[0]) < 1e-5 else 1
-                # print(intermediateRes)
+            elif placeh_mapping_stage == 's2':
+                intermediateRes = {}
+                for k, compVal in intermediateCompVals.items():
+                    intermediateRes[k] = 0 if abs(ts.ckks_vector_from(context, compVal).decrypt()[0]) < 1e-5 else 1
         else:
             intermediateRes = pickle.loads(await enc_comparison_val.read())
             for p, noisyEncValue in intermediateRes.items():
@@ -202,15 +203,34 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         train_labels, train_preds = [], []
         
         return Response(response_json, media_type='application/octet-stream')
-                                   
-                                  
-    @app.post('/train')
-    async def train(to_train: UploadFile = File(...), glb_model_params: UploadFile = File(...), batch_size: UploadFile = File(...)):
-        global local_model, criterion, batchSize, PlaceholderMaptoRealTarget, train_losses, train_labels, train_preds
 
-        # Extract placeholders to train and global model parameter from server
+
+    @app.post('/train_request')
+    async def train_request(to_train: UploadFile = File(...)):
+        global samples, PlaceholderMaptoRealTarget
+        samples = []
+        unavail_placeholders = []
+        # Extract placeholders to train from server and check if local label data is available
         serializ_to_train = await to_train.read()
         to_train = pickle.loads(serializ_to_train)
+        for p, count in Counter(to_train).items():
+            realLabel = PlaceholderMaptoRealTarget[p] # map placeholder to real label and get the label data to train 
+            try:
+                data = list(islice(trainDataByLabels[realLabel], count))
+                if len(data) > 0:
+                    samples.extend(data)
+                if len(data) != count:
+                    unavail_placeholders.extend([p] * (count - len(data)))
+            except Exception as e:
+                print('exception')
+                print(p, count)
+                print(port)
+        return rank+1, unavail_placeholders
+        
+    
+    @app.post('/train')
+    async def train(glb_model_params: UploadFile = File(...), batch_size: UploadFile = File(...)):
+        global local_model, criterion, batchSize, samples, train_losses, train_labels, train_preds
         
         serializ_glb_model_params = await glb_model_params.read()
         glb_model_params = pickle.loads(serializ_glb_model_params)
@@ -223,16 +243,6 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         local_model = local_model.to(device)
         local_model.train()
         
-        # map placeholder to real label and get the label data to train
-        samples = []
-        for p, count in Counter(to_train).items():
-            realLabel = PlaceholderMaptoRealTarget[p] 
-            try:
-                samples.extend(list(islice(trainDataByLabels[realLabel], count))) 
-            except Exception as e:
-                print('exception')
-                print(p, count)
-                print(port)
         inputs = torch.stack(list(zip(*samples))[0]).to(device).float()
         labels = torch.tensor(list(zip(*samples))[1], dtype=torch.long).to(device)
         
