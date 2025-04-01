@@ -208,7 +208,6 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
     @app.post('/train_request')
     async def train_request(to_train: UploadFile = File(...)):
         global samples, PlaceholderMaptoRealTarget
-        samples = []
         unavail_placeholders = []
         # Extract placeholders to train from server and check if local label data is available
         serializ_to_train = await to_train.read()
@@ -253,7 +252,8 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         train_labels.extend(list(zip(*samples))[1])
         train_preds.extend(predicted.tolist())
         train_losses += loss.item()
-
+        samples = []
+        
         # get the grad of summed loss
         grad = torch.autograd.grad(loss, local_model.parameters(), retain_graph=False)
 
