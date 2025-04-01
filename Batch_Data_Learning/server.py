@@ -453,7 +453,8 @@ async def send_localTrain_request(clientsPlaceholdersBatch, clientsAvailForEachP
                     readyClients.append(clientAddr)
                 exhaustedPlaceholder = set(unavail_placeholders)
                 for p in exhaustedPlaceholder:
-                    clientsAvailForEachP[p].remove(f'c{clientAddr}')
+                    # clientsAvailForEachP[p].remove(f'c{clientAddr}')
+                    clientsAvailForEachP[p] = [item for item in clientsAvailForEachP[p] if item[0] != f'c{clientAddr}']
             else:
                 readyClients.append(clientAddr)
                 
