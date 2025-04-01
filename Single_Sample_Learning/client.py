@@ -255,8 +255,6 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
                 train_labels.append(y)
                 train_preds.append(predicted.item())
                 train_losses.append(loss.item())
-
-
             else:
                 target_exhausted.append(targetPlaceholder)
                 target_noTrain.append(targetPlaceholder) 
