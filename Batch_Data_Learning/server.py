@@ -94,18 +94,18 @@ def generate_weightedSelectedClients_list(SLS, globalCounts, clientsAvailPlaceho
         random.shuffle(clientAssignedForPlaceholder[placeholder])
         
     # Map the assigned client for each placeholder in Placeholder list
-    mappedClientAssignedForPlaceholder = []
+    mappedSelectedClients = []
     targetsI_toremove = []
     for i, target in enumerate(SLS):
         if clientAssignedForPlaceholder[target]:
-            mappedClientAssignedForPlaceholder.append(clientAssignedForPlaceholder[target].pop(0))
+            mappedSelectedClients.append(clientAssignedForPlaceholder[target].pop(0))
         else:
             targetsI_toremove.append(i)
     
     for index in sorted(targetsI_toremove, reverse=True):
         del SLS[index]
     
-    return mappedClientAssignedForPlaceholder
+    return mappedSelectedClients
 
 
 def get_currentClientsAvail_byPlaceholder(clientsAvailPlaceholderTargets):
@@ -120,7 +120,7 @@ def get_currentClientsAvail_byPlaceholder(clientsAvailPlaceholderTargets):
 
 def client_selection(placeholders, availClientsByP):
     placeholderCounts = Counter(placeholders)
-    selectedClients = {placeholder: random.choices(availClientsByP[placeholder], weights= , k=count) for placeholder, count in placeholderCounts.items()} 
+    selectedClients = {placeholder: random.choices(list(zip(*availClientsByP[placeholder]))[0], weights=list(zip(*availClientsByP[placeholder]))[1], k=count) for placeholder, count in placeholderCounts.items()} 
     
     mappedSelectedClients = []
     for p in placeholders:
@@ -291,7 +291,7 @@ def computePlaceholders(clients, serialz_clients_enc_info):
             pairwise_enc_results[i] = [(client_enc_label - unique_elem).serialize() for unique_elem in uniqueList]
         
         pairwise_results = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', 
-                    files={'enc_comparison_val': pickle.dumps(pairwise_enc_results), 'mapping_stage': 'True'})
+                    files={'enc_comparison_val': pickle.dumps(pairwise_enc_results), 'mapping_stage': 's1'})
         
         pairwise_results = pickle.loads(pairwise_results.content) 
         for i, pairwise_result in pairwise_results.items():
@@ -300,31 +300,6 @@ def computePlaceholders(clients, serialz_clients_enc_info):
         
         if len(uniqueList) == total_class:
             break
-    
-
-    # client_with_max_labels = max(clients_enc_info, key=len)
-    # uniqueList = [encItem[0] + ts.ckks_vector(context, [0.0000001]) for encItem in client_with_max_labels]
-
-    # for encTarget, encTargetAmt in list(itertools.chain(*(subl for subl in clients_enc_info if subl != client_with_max_labels))):
-    #     print(len(uniqueList))
-    #     add_elem = True  
-    #     if uniqueList:
-    #         enc_res_list = pickle.dumps([(encTarget - unique_elem).serialize() for unique_elem in uniqueList])
-    
-    #         res = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', 
-    #                             files={'enc_comparison_val': enc_res_list, 'mapping_stage': 'True'})
-    
-    #         decrypted_results = pickle.loads(res.content) 
-    #         if 0 in decrypted_results:  
-    #             add_elem = False  
-
-    #     if add_elem:
-    #         # add a small encrypted value into the encrypted target to prevent transparent ciphertext issue in later comparison stage 
-    #         encTarget = encTarget + ts.ckks_vector(context, [0.0000001]) 
-    #         uniqueList.append(encTarget)
-        
-    #     if len(uniqueList) == total_class:
-    #         break
     
     
     def generate_placeholders(limit):
@@ -350,7 +325,7 @@ def computePlaceholders(clients, serialz_clients_enc_info):
     # placeholder to encrypted real label mapping for each client to convert the placeholder to train from server to the corresponding real label to train
     clientsPlaceholderTargetMapEncRealTarget = {}
 
-    def process_client(clientID, clientEncTargetTargetAmtVectors):
+    def client_encTargetToPlaceholderMapping(clientID, clientEncTargetTargetAmtVectors):
         clientsAvailPlaceholderTargets[clientID] = []
         clientsPlaceholderTargetMapEncRealTarget[clientID] = {}
         placeholderTargetMapEncRealTargetCopy = placeholderTargetMapEncRealTarget.copy()
@@ -363,7 +338,7 @@ def computePlaceholders(clients, serialz_clients_enc_info):
             # Send request concurrently
             res = requests.post(
                 f'http://127.0.0.1:{basePort + int(clientID[1:])}/decryptIntermediateComparisonResult', 
-                files={'enc_comparison_val': pickle.dumps(enc_res), 'mapping_stage': 'True'}
+                files={'enc_comparison_val': pickle.dumps(enc_res), 'mapping_stage': 's2'}
             )
             client_decrypted_res = pickle.loads(res.content)
 
@@ -377,7 +352,7 @@ def computePlaceholders(clients, serialz_clients_enc_info):
     # Run concurrent requests using threads
     client_ids = ['c' + str(client) for client in clients]
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        executor.map(process_client, client_ids, clients_enc_info) 
+        executor.map(client_encTargetToPlaceholderMapping, client_ids, clients_enc_info) 
 
 
     # global counts
@@ -403,21 +378,40 @@ def computePlaceholders(clients, serialz_clients_enc_info):
 
 
     # uniform client selection: set label proportion weight as 1.0 for all client labels; weighted selection: compute the normalized label proportion for each client label
-    for client, items in clientsAvailPlaceholderTargets.items():
+    def compute_label_prop(client, items, globalCounts):
         noises = {}
         clientAvailPlaceholderTarget = {}
-        # if else statement here
-        for i, (placeholder, placeholderAmt) in enumerate(items):
-            inverseTotal = 1 / globalCounts[placeholder]
-            noise = random.random()
-            noises[placeholder] = noise
-            encNormalizedLabelProp = ((placeholderAmt * inverseTotal) + noise).serialize() # Normalize by dividing by the sum
-            clientAvailPlaceholderTarget[placeholder] = encNormalizedLabelProp
-        res = requests.post(f'http://127.0.0.1:{basePort + int(client[1:])}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(clientAvailPlaceholderTarget), 'mapping_stage': 'False'})
-        clientDecrypted_normalizedLabelProp = pickle.loads(res.content)
-        for i, (placeholder, noisyPlaceholderAmtProp) in enumerate(clientDecrypted_normalizedLabelProp.items()):
-            clientsAvailPlaceholderTargets[client][i] = (placeholder, noisyPlaceholderAmtProp[0] - noises[placeholder])  # Assign decrypted normalized value back
+        if args.uniformClientSelection == 0:
+            for i, (placeholder, encPlaceholderAmt) in enumerate(items):
+                inverseTotal = 1 / globalCounts[placeholder]
+                noise = random.random()
+                noises[placeholder] = noise
+                encNormalizedLabelProp = ((encPlaceholderAmt * inverseTotal) + noise).serialize()
+                clientAvailPlaceholderTarget[placeholder] = encNormalizedLabelProp
+            
+            res = requests.post(
+                f'http://127.0.0.1:{basePort + int(client[1:])}/decryptIntermediateComparisonResult', 
+                files={'enc_comparison_val': pickle.dumps(clientAvailPlaceholderTarget), 'mapping_stage': 'False'}
+            )
+            clientDecrypted_normalizedLabelProp = pickle.loads(res.content)
+            
+            for i, (placeholder, noisyPlaceholderAmtProp) in enumerate(clientDecrypted_normalizedLabelProp.items()):
+                items[i] = (placeholder, noisyPlaceholderAmtProp[0] - noises[placeholder])  # Assign decrypted normalized value back
+        else:
+            for i, (placeholder, encPlaceholderAmt) in enumerate(items):
+                items[i] = (placeholder, 1.0)
+        return client, items  
 
+    # Use ThreadPoolExecutor to send requests concurrently
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_to_client = {
+            executor.submit(compute_label_prop, client, items, globalCounts): client
+            for client, items in clientsAvailPlaceholderTargets.items()
+        }
+        for future in concurrent.futures.as_completed(future_to_client):
+            client, labels_prop = future.result()
+            clientsAvailPlaceholderTargets[client] = labels_prop 
+            
     return globalCounts, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget
     
 
@@ -437,18 +431,45 @@ async def send_prepareTrainData_request(clients):
     return {"status": "Prepare training data signals sent"}
 
 
-async def send_localTrain_request(serialz_glb_model_params, currentBatchSize, clientsPlaceholdersBatch):
+async def send_localTrain_request(clientsPlaceholdersBatch, clientsAvailForEachP):
     async with httpx.AsyncClient(timeout=None) as client_session:
         tasks = [
             client_session.post(
-                f'http://127.0.0.1:{basePort + int(client[1:])}/train', 
-                files={'to_train': pickle.dumps(placeholdersToTrain), 'glb_model_params': serialz_glb_model_params, 'batch_size': pickle.dumps(currentBatchSize)} 
+                f'http://127.0.0.1:{basePort + int(client[1:])}/train_request', 
+                files={'to_train': pickle.dumps(placeholdersToTrain)} 
             )                                                                               
             for client, placeholdersToTrain in clientsPlaceholdersBatch.items()
         ]
+        readyClients = []
+        placeholdersToReassign = []
         responses = await asyncio.gather(*tasks)
+        for response in responses:
+            data = response.json()
+            clientAddr, unavail_placeholders = data 
+            if unavail_placeholders:
+                placeholdersToReassign.extend(unavail_placeholders)
+                if (len(clientsPlaceholdersBatch[f'c{clientAddr}']) - len(unavail_placeholders)) > 0:
+                    readyClients.append(clientAddr)
+                exhaustedPlaceholder = set(unavail_placeholders)
+                for p in exhaustedPlaceholder:
+                    clientsAvailForEachP[p].remove(f'c{clientAddr}')
+            else:
+                readyClients.append(clientAddr)
+                
+    return readyClients, placeholdersToReassign, clientsAvailForEachP
 
-        clients_summed_gradients = [torch.load(io.BytesIO(response.content)) for response in responses]
+
+async def start_local_train(clients, serialz_glb_model_params, currentBatchSize):
+    async with httpx.AsyncClient(timeout=None) as client_session:
+        tasks = [
+            client_session.post(
+                f'http://127.0.0.1:{basePort + int(client)}/train', 
+                files={'glb_model_params': serialz_glb_model_params, 'batch_size': pickle.dumps(currentBatchSize)} 
+            )                                                                               
+            for client in clients
+        ]
+        responses = await asyncio.gather(*tasks)
+        clients_summed_gradients = [pickle.loads(response.content) for response in responses]
     
     return clients_summed_gradients
 
@@ -505,14 +526,12 @@ async def start_federated_learning(basePort):
         lr_schedl = torch.optim.lr_scheduler.OneCycleLR(optimizer, lr, epochs=epochs, steps_per_epoch=math.ceil(round(sum([count for placeholder, count in globalCounts.items()])) / batchSize))
     
     resultFilePath = args.resultFilePath
-    start_time = datetime.now()
 
     for epoch in range(1, epochs+1):
         torch.cuda.empty_cache()
         SLS = generate_SLS(globalCounts)
         if args.uniformClientSelection == 0:
             mappedClientAssignedForPlaceholder = generate_weightedSelectedClients_list(SLS, globalCounts, clientsAvailPlaceholderTargets)
-        # targets, mappedClientAssignedForPlaceholder = init(globalCounts, clientsAvailPlaceholderTargets) 
 
         clientsAvailForEachP = get_currentClientsAvail_byPlaceholder(clientsAvailPlaceholderTargets)
         
@@ -528,21 +547,33 @@ async def start_federated_learning(basePort):
                 clientsBatch = mappedClientAssignedForPlaceholder[0:batchSize] # extract the assigned clients for the current batch of placeholders
                 mappedClientAssignedForPlaceholder = mappedClientAssignedForPlaceholder[batchSize:]
             else:
-                
+                clientsBatch = client_selection(placeholderBatch, clientsAvailForEachP)
                 
             clientsPlaceholdersBatch = {client: [] for client in set(clientsBatch)}
             for client, placeholderToTrain in zip(clientsBatch, placeholderBatch):
                 clientsPlaceholdersBatch[client].append(placeholderToTrain)
-                
-            totalAssignedClientsInBatch = len(set(clientsBatch))
             
             get_all_batchNormLayers()
-            
-            serialz_glb_model_params = pickle.dumps(glb_model.state_dict())
 
+            awaitToStartTrainClients = []
+            while clientsPlaceholdersBatch:
+                readyClients, placeholdersToReassign, clientsAvailForEachP = await send_localTrain_request(clientsPlaceholdersBatch, clientsAvailForEachP)
+                if readyClients:
+                    awaitToStartTrainClients.extend(readyClients)
+                if placeholdersToReassign:
+                    clientsBatchSubset = client_selection(placeholdersToReassign, clientsAvailForEachP)
+                    
+                    clientsPlaceholdersBatch = {client: [] for client in set(clientsBatchSubset)}
+                    for client, placeholderToTrain in zip(clientsBatchSubset, placeholdersToReassign):
+                        clientsPlaceholdersBatch[client].append(placeholderToTrain)
+                else:
+                    break
             
-            # get the average grads by summing up all the summed gradients of clients and then divide by batch size
-            accumulated_grads = await send_localTrain_request(serialz_glb_model_params, len(placeholderBatch), clientsPlaceholdersBatch)
+            totalAssignedClientsInBatch = len(awaitToStartTrainClients)
+         
+            # signal all awaiting selected clients to start local training and get the average grads by summing up all the summed gradients of clients and then divide by batch size
+            serialz_glb_model_params = pickle.dumps(glb_model.state_dict())
+            accumulated_grads = await start_local_train(awaitToStartTrainClients, serialz_glb_model_params, len(placeholderBatch))
             avg_grads = [torch.sum(torch.stack(grads), dim=0)/len(placeholderBatch) for grads in list(zip(*accumulated_grads))]
             
             # update global model with the average grads
