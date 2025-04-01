@@ -127,21 +127,28 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
     async def decryptComparisonResult(enc_comparison_val: UploadFile = File(...), mapping_stage: UploadFile = File(...)):
         global context
         placeh_mapping_stage = await mapping_stage.read()
+        placeh_mapping_stage = placeh_mapping_stage.decode() 
         # set comparison value as 0 or 1 during placeholder mapping stage to avoid malicious server from using the minus result to infer the real label a client holds
-        if placeh_mapping_stage.decode() == 'True':
+        if placeh_mapping_stage in ['s1', 's2']:
+            print(placeh_mapping_stage)
             intermediateCompVals = pickle.loads(await enc_comparison_val.read())
-            if isinstance(intermediateCompVals, list):
-                intermediateRes = []
-                intermediateRes = [0 if abs(ts.ckks_vector_from(context, intermediateCompVal).decrypt()[0]) < 1e-5 else 1 for intermediateCompVal in intermediateCompVals]
-            else:
+            if placeh_mapping_stage == 's1':
                 intermediateRes = {}
-                for p, compVal in intermediateCompVals.items():
-                    intermediateRes[p] = 0 if abs(ts.ckks_vector_from(context, compVal).decrypt()[0]) < 1e-5 else 1
+                for k, compVal in intermediateCompVals.items():
+                    if isinstance(compVal, list):
+                        intermediateRes[k] = [
+                            0 if abs(ts.ckks_vector_from(context, val).decrypt()[0]) < 1e-5 else 1
+                            for val in compVal
+                        ]
+            elif placeh_mapping_stage == 's2':
+                intermediateRes = {}
+                for k, compVal in intermediateCompVals.items():
+                    intermediateRes[k] = 0 if abs(ts.ckks_vector_from(context, compVal).decrypt()[0]) < 1e-5 else 1
         else:
             intermediateRes = pickle.loads(await enc_comparison_val.read())
             for p, noisyEncValue in intermediateRes.items():
                 intermediateRes[p] = ts.ckks_vector_from(context, noisyEncValue).decrypt()
-                
+
         return Response(pickle.dumps(intermediateRes), media_type='application/octet-stream')
 
 
