@@ -24,10 +24,8 @@ class CustomBatchNormManualFunction(torch.autograd.Function):
         
     #store constants
     ctx.save_for_backward(gamma, denominator, in_hat, input)
-    ctx.epsilon = eps
-    
+    ctx.epsilon = eps    
     return out
-
 
   @staticmethod
   def backward(ctx, grad_output):
@@ -49,12 +47,10 @@ class CustomBatchNormManualFunction(torch.autograd.Function):
         term_1 = grad_in_hat * (N * W * H)
 
         local_term_2 = torch.sum(grad_in_hat, dim=[0, 2, 3])
-        # term_2 = getOverallTerm2(local_term_2)
         result = requests.post(f'http://127.0.0.1:{serverPort}/computeBatchTerm2', data=pickle.dumps(local_term_2.detach()))
         term_2 = pickle.loads(result.content)
 
         local_part_term_3 = torch.sum(grad_in_hat * in_hat, dim=[0, 2, 3])
-        # part_term_3 = getOverallPartTerm3(local_part_term_3)
         result = requests.post(f'http://127.0.0.1:{serverPort}/computeBatchPartTerm3', data=pickle.dumps(local_part_term_3.detach()))
         part_term_3 = pickle.loads(result.content)
     
@@ -92,9 +88,6 @@ class CustomBatchNormManualModule(nn.Module):
     self.eps = eps
     self.momentum = momentum
 
-    # self.running_mean = torch.zeros(self.n_neurons)
-    # self.running_var = torch.ones(self.n_neurons)
-
     self.register_buffer('running_mean', torch.zeros(self.n_neurons, dtype=torch.float))
     self.register_buffer('running_var', torch.ones(self.n_neurons, dtype=torch.float))
 
@@ -107,22 +100,18 @@ class CustomBatchNormManualModule(nn.Module):
 
     _, C, H, W = input.shape
     N = batchSize
-    # print('len placeholderBatch')
-    print(N)
     n = N * H * W
     # print(f'n: {n}')
     batch_normalization = CustomBatchNormManualFunction()
     if self.training:
       # batch mean
       localSum = input.sum(dim=[0, 2, 3])
-      # batchMean = calculateBatchMean(localSum, n)
       result = requests.post(f'http://127.0.0.1:{serverPort}/computeBatchMean', files={'localSum': pickle.dumps(localSum.detach()), 'n': pickle.dumps(n)})
       batchMean = pickle.loads(result.content)
     #   print(f'batch mean: {batchMean}')
 
       # batch variance
       localStdDSum = ((input - batchMean[None, :, None, None]) ** 2).sum(dim=[0, 2, 3])
-      # batchVar = calculateBatchVar(localStdDSum, n)
       result = requests.post(f'http://127.0.0.1:{serverPort}/computeBatchVar', files={'localStdv': pickle.dumps(localStdDSum.detach()), 'n': pickle.dumps(n)})
       batchVar = pickle.loads(result.content)
     #   print(f'batchVar: {batchVar}')
