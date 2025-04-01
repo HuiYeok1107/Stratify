@@ -61,6 +61,7 @@ clientsCountTracker = 0
 
 basePort = args.start_port
 glb_model = batch_learning_model[args.dataset].to(device)
+containCustomBN = any(isinstance(module, CustomBatchNormManualModule) for module in glb_model.modules())
 
 app = FastAPI()
 
@@ -552,8 +553,9 @@ async def start_federated_learning(basePort):
             clientsPlaceholdersBatch = {client: [] for client in set(clientsBatch)}
             for client, placeholderToTrain in zip(clientsBatch, placeholderBatch):
                 clientsPlaceholdersBatch[client].append(placeholderToTrain)
-            
-            get_all_batchNormLayers()
+
+            if containCustomBN:
+                get_all_batchNormLayers()
 
             awaitToStartTrainClients = []
             while clientsPlaceholdersBatch:
