@@ -118,6 +118,16 @@ def get_currentClientsAvail_byPlaceholder(clientsAvailPlaceholderTargets):
     return clientsAvailForEachPlaceh
     
 
+def client_selection(placeholders, availClientsByP):
+    placeholderCounts = Counter(placeholders)
+    selectedClients = {placeholder: random.choices(availClientsByP[placeholder], weights= , k=count) for placeholder, count in placeholderCounts.items()} 
+    
+    mappedSelectedClients = []
+    for p in placeholders:
+        mappedSelectedClients.append(selectedClients[p].pop(0))
+    return mappedSelectedClients
+
+
 @app.get('/get_glb_params')
 async def get_glb_params():
     model_params = pickle.dumps(glb_model.state_dict())
@@ -513,10 +523,13 @@ async def start_federated_learning(basePort):
         while len(SLS) != 0:
             placeholderBatch = SLS[0: batchSize] # extract placeholders from list based on the defined batch size
             SLS = SLS[batchSize:]
-
-            clientsBatch = mappedClientAssignedForPlaceholder[0:batchSize] # extract the assigned clients for the current batch of placeholders
-            mappedClientAssignedForPlaceholder = mappedClientAssignedForPlaceholder[batchSize:]
-
+            
+            if args.uniformClientSelection == 0:
+                clientsBatch = mappedClientAssignedForPlaceholder[0:batchSize] # extract the assigned clients for the current batch of placeholders
+                mappedClientAssignedForPlaceholder = mappedClientAssignedForPlaceholder[batchSize:]
+            else:
+                
+                
             clientsPlaceholdersBatch = {client: [] for client in set(clientsBatch)}
             for client, placeholderToTrain in zip(clientsBatch, placeholderBatch):
                 clientsPlaceholdersBatch[client].append(placeholderToTrain)
