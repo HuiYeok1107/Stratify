@@ -42,19 +42,21 @@ async def get_glb_params():
     return Response(model_params, media_type='application/octet-stream')
 
 
-# init func targets, and client available placeholders dict
-def initVars(sums, clientsAvailPlaceholderTargets):
-    # Generate N length Placeholder list based on the total count for each placeholder obtained through homomorphic encryption process  
-    targets = []
-    for placeholder, count in sums.items():
-        targets.extend([placeholder] * round(count))
-    random.shuffle(targets)
+def generate_SLS(globalCounts):
+    # Generate N length Placeholder list based on the global count for each placeholder obtained through homomorphic encryption process  
+    SLS = []
+    for placeholder, count in globalCounts.items():
+        SLS.extend([placeholder] * round(count))
+    random.shuffle(SLS)   
+    return SLS
 
+
+def initVars(clientsAvailPlaceholderTargets):
     clientsAvailPlaceholderTarget = clientsAvailPlaceholderTargets
 
     # queue clients assigned to train labels in sequence
     consecutiveClientsInQueue = [] 
-    return targets, clientsAvailPlaceholderTarget, consecutiveClientsInQueue
+    return clientsAvailPlaceholderTarget, consecutiveClientsInQueue
 
 
 def getCurrentClientsAvailByPlaceholder(clientsAvailPlaceholderTargets):
@@ -207,26 +209,31 @@ def computePlaceholders(clients, serialz_clients_enc_info):
         c_enc_info = [[ts.ckks_vector_from(context, encSerialTargetVector), ts.ckks_vector_from(context, encSerialTargetAmtVector)] for encSerialTargetVector, encSerialTargetAmtVector in serialz_client_enc_info]
         clients_enc_info.append(c_enc_info)
     
-    uniqueList = []
-    for encTarget, encTargetAmt in list(itertools.chain(*clients_enc_info)):
-        add_elem = True  
-        if uniqueList:
-            enc_res_list = [encTarget - unique_elem for unique_elem in uniqueList]
-            
-            serialized_data = pickle.dumps([vec.serialize() for vec in enc_res_list])
-    
-            res = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', 
-                                files={'enc_comparison_val': serialized_data, 'mapping_stage': 'True'})
-    
-            decrypted_results = pickle.loads(res.content) 
-            if 0 in decrypted_results:  
-                add_elem = False  
+    for layer in reversed(list(glb_model.modules())):
+        if hasattr(layer, 'out_features'):
+            total_class = layer.out_features
 
-        if add_elem:
-            # add a small encrypted value into the encrypted target to prevent transparent ciphertext issue in later comparison stage 
-            encTarget = encTarget + ts.ckks_vector(context, [0.0000001]) 
-            uniqueList.append(encTarget)
-    
+    client_with_max_labels = max(clients_enc_info, key=len)
+    uniqueList = [encItem[0] + ts.ckks_vector(context, [0.0000001]) for encItem in client_with_max_labels]
+    remaining_clients_enc_info = [subl for subl in clients_enc_info if subl != client_with_max_labels]
+
+    for client_enc_info in remaining_clients_enc_info:
+        print(len(uniqueList))
+        pairwise_enc_results = {}
+        client_enc_labels = [encItem[0] for encItem in client_enc_info]
+        for i, client_enc_label in enumerate(client_enc_labels):
+            pairwise_enc_results[i] = [(client_enc_label - unique_elem).serialize() for unique_elem in uniqueList]
+        
+        pairwise_results = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', 
+                    files={'enc_comparison_val': pickle.dumps(pairwise_enc_results), 'mapping_stage': 's1'})
+        
+        pairwise_results = pickle.loads(pairwise_results.content) 
+        for i, pairwise_result in pairwise_results.items():
+            if 0 not in pairwise_result:
+                uniqueList.append(client_enc_labels[i] + ts.ckks_vector(context, [0.0000001]))
+        
+        if len(uniqueList) == total_class:
+            break
     
     def generate_placeholders(limit):
         alphabet = string.ascii_uppercase  # 'A' to 'Z'
@@ -251,7 +258,7 @@ def computePlaceholders(clients, serialz_clients_enc_info):
     # placeholder to encrypted real label mapping for each client to convert the placeholder to train from server to the corresponding real label to train
     clientsPlaceholderTargetMapEncRealTarget = {}
 
-    def process_client(clientID, clientEncTargetTargetAmtVectors):
+    def client_encTargetToPlaceholderMapping(clientID, clientEncTargetTargetAmtVectors):
         clientsAvailPlaceholderTargets[clientID] = []
         clientsPlaceholderTargetMapEncRealTarget[clientID] = {}
         placeholderTargetMapEncRealTargetCopy = placeholderTargetMapEncRealTarget.copy()
@@ -264,7 +271,7 @@ def computePlaceholders(clients, serialz_clients_enc_info):
             # Send request concurrently
             res = requests.post(
                 f'http://127.0.0.1:{basePort + int(clientID[1:])}/decryptIntermediateComparisonResult', 
-                files={'enc_comparison_val': pickle.dumps(enc_res), 'mapping_stage': 'True'}
+                files={'enc_comparison_val': pickle.dumps(enc_res), 'mapping_stage': 's2'}
             )
             client_decrypted_res = pickle.loads(res.content)
 
@@ -278,48 +285,66 @@ def computePlaceholders(clients, serialz_clients_enc_info):
     # Run concurrent requests using threads
     client_ids = ['c' + str(client) for client in clients]
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        executor.map(process_client, client_ids, clients_enc_info) 
-
+        executor.map(client_encTargetToPlaceholderMapping, client_ids, clients_enc_info) 
 
     # global counts
-    sums = {}
+    globalCounts = {}
     for client, items in clientsAvailPlaceholderTargets.items():
         for placeholder, placeholderAmt in items:
-            if placeholder not in sums:
-                sums[placeholder] = 0
-            sums[placeholder] = sums[placeholder] + placeholderAmt
+            if placeholder not in globalCounts:
+                globalCounts[placeholder] = 0
+            globalCounts[placeholder] = globalCounts[placeholder] + placeholderAmt
 
     noises = {}
-    for placeholder, encPlaceholderSum in sums.items():
+    for placeholder, encPlaceholderSum in globalCounts.items():
         # server adds random value to encrypted global count, serialized sum vector and send to client for decryption 
         noise = random.randint(126, 5234)
         noises[placeholder] = noise
-        sums[placeholder] = (encPlaceholderSum + noise).serialize()
+        globalCounts[placeholder] = (encPlaceholderSum + noise).serialize()
 
-    res = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(sums), 'mapping_stage': 'False'})
+    res = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(globalCounts), 'mapping_stage': 'False'})
     res = pickle.loads(res.content)
     for placeholder, placeholderGlobalSum in res.items():
         clientDecrypted_placeholderSum = placeholderGlobalSum[0] - noises[placeholder]
-        sums[placeholder] = clientDecrypted_placeholderSum
+        globalCounts[placeholder] = clientDecrypted_placeholderSum
 
-
-    # calculate the normalized label proportion for each client label
-    for client, items in clientsAvailPlaceholderTargets.items():
+    # uniform client selection: set label proportion weight as 1.0 for all client labels; weighted selection: compute the normalized label proportion for each client label
+    def compute_label_prop(client, items, globalCounts):
         noises = {}
         clientAvailPlaceholderTarget = {}
-        for i, (placeholder, placeholderAmt) in enumerate(items):
-            inverseTotal = 1 / sums[placeholder]
-            noise = random.random()
-            noises[placeholder] = noise
-            encNormalizedLabelProp = ((placeholderAmt * inverseTotal) + noise).serialize() # Normalize by dividing by the sum
-            clientAvailPlaceholderTarget[placeholder] = encNormalizedLabelProp
-        res = requests.post(f'http://127.0.0.1:{basePort + int(client[1:])}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(clientAvailPlaceholderTarget), 'mapping_stage': 'False'})
-        clientDecrypted_normalizedLabelProp = pickle.loads(res.content)
-        for i, (placeholder, noisyPlaceholderAmtProp) in enumerate(clientDecrypted_normalizedLabelProp.items()):
-            clientsAvailPlaceholderTargets[client][i] = (placeholder, noisyPlaceholderAmtProp[0] - noises[placeholder])  # Assign decrypted normalized value back
+        if args.uniformClientSelection == 0:
+            for i, (placeholder, encPlaceholderAmt) in enumerate(items):
+                inverseTotal = 1 / globalCounts[placeholder]
+                noise = random.random()
+                noises[placeholder] = noise
+                encNormalizedLabelProp = ((encPlaceholderAmt * inverseTotal) + noise).serialize()
+                clientAvailPlaceholderTarget[placeholder] = encNormalizedLabelProp
+            
+            res = requests.post(
+                f'http://127.0.0.1:{basePort + int(client[1:])}/decryptIntermediateComparisonResult', 
+                files={'enc_comparison_val': pickle.dumps(clientAvailPlaceholderTarget), 'mapping_stage': 'False'}
+            )
+            clientDecrypted_normalizedLabelProp = pickle.loads(res.content)
+            
+            for i, (placeholder, noisyPlaceholderAmtProp) in enumerate(clientDecrypted_normalizedLabelProp.items()):
+                items[i] = (placeholder, noisyPlaceholderAmtProp[0] - noises[placeholder])  # Assign decrypted normalized value back
+        else:
+            for i, (placeholder, encPlaceholderAmt) in enumerate(items):
+                items[i] = (placeholder, 1.0)
+        return client, items  
 
-    return sums, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget
-
+    # Use ThreadPoolExecutor to send requests concurrently
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_to_client = {
+            executor.submit(compute_label_prop, client, items, globalCounts): client
+            for client, items in clientsAvailPlaceholderTargets.items()
+        }
+        for future in concurrent.futures.as_completed(future_to_client):
+            client, labels_prop = future.result()
+            clientsAvailPlaceholderTargets[client] = labels_prop 
+            
+    return globalCounts, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget
+    
 
 def send_PlaceholderMapToRealLabel(client, mapping):
     serialized_data = {placeholder: encRealLabel.serialize() for placeholder, encRealLabel in mapping.items()}
@@ -337,37 +362,37 @@ async def start_federated_learning():
         results = list(executor.map(lambda client: pickle.loads(requests.post(f'http://127.0.0.1:{basePort + int(client)}/encryptLabels').content), clients))
     serialz_clients_enc_info.extend(results)
 
-    sums, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget = computePlaceholders(clients, serialz_clients_enc_info)
+    globalCounts, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget = computePlaceholders(clients, serialz_clients_enc_info)
     for client, mapping in clientsPlaceholderTargetMapEncRealTarget.items():    
         send_PlaceholderMapToRealLabel(client, mapping) 
 
     st = time.time()
     for epoch in range(1, epochs+1):
-        # call init()
-        targets, clientsAvailPlaceholderTargets, consecutiveClientsInQueue = initVars(sums, clientsAvailPlaceholderTargets)
+        SLS = generate_SLS(globalCounts)
+        clientsAvailPlaceholderTargets, consecutiveClientsInQueue = initVars(clientsAvailPlaceholderTargets)
         probSelectedClientsAvailForSort_forEachTarget = getCurrentClientsAvailByPlaceholder(clientsAvailPlaceholderTargets)  # all clients are considered for probabilistic selection at first iteration
         firstClient = True
 
         await send_prepareTrainData_request(clients)
         
-        while (len(targets) != 0) or (len(consecutiveClientsInQueue) != 0):
-            print(f'Remaining Global Training Labels To Train: {len(targets)}')
-            # print(f'Remaining Global Training Labels To Train: {Counter(targets)}')
-            # continously monitor the assigned clients in queue, whenever there are less than 2 clients in queue, assign clients for the next window targets to train so that the last client in current window knows which next client to send the parameters to
-            if (len(targets)!=0) and (len(consecutiveClientsInQueue) <= 2):
+        while (len(SLS) != 0) or (len(consecutiveClientsInQueue) != 0):
+            print(f'Remaining Global Training Labels To Train: {len(SLS)}')
+            # print(f'Remaining Global Training Labels To Train: {Counter(SLS)}')
+            # continously monitor the assigned clients in queue, whenever there are less than 2 clients in queue, assign clients for the next window placeholders to train so that the last client in current window knows which next client to send the parameters to
+            if (len(SLS)!=0) and (len(consecutiveClientsInQueue) <= 2):
                 while (len(consecutiveClientsInQueue) <= 2):
-                    windowTargets = targets[0:30] # extract the labels subset from global training labels list
-                    targets = targets[30:] # update global training labels list
+                    windowTargets = SLS[0:30] # extract the labels subset from global training labels list
+                    SLS = SLS[30:] # update global training labels list
                     
                     sortedClients_forEachWindowTarget = sortClients(windowTargets, clientsAvailPlaceholderTargets, probSelectedClientsAvailForSort_forEachTarget) # assign the suitable client to train on a target in such a way that minimize model parameters passing 
                     
                     windowTargets_selectedClients = [value[0] for value in sortedClients_forEachWindowTarget.values()] # get the selected first client for each target of window
                     consecutiveClientsAndTargets = groupConsecutiveClients(windowTargets_selectedClients, windowTargets) # group consecutive clients together 
-                    consecutiveClientsInQueue.extend(consecutiveClientsAndTargets) # add clients with their respective targets to queue for training
+                    consecutiveClientsInQueue.extend(consecutiveClientsAndTargets) # add clients and their respective placeholders into queue for training
         
-                    probSelectedClientsAvailForSort_forEachTarget = updateProbabilisticSelectedClientsLists(windowTargets_selectedClients, windowTargets, clientsAvailPlaceholderTargets) # update probabilistic selected clients list for next window targets sorting
+                    probSelectedClientsAvailForSort_forEachTarget = updateProbabilisticSelectedClientsLists(windowTargets_selectedClients, windowTargets, clientsAvailPlaceholderTargets) # update probabilistic selected clients list for next window placeholders sorting
                     
-                    if (len(targets)==0):
+                    if (len(SLS)==0):
                         break
 
             current_client = consecutiveClientsInQueue.pop(0)
@@ -397,7 +422,7 @@ async def start_federated_learning():
                     for clientInQueue in consecutiveClientsInQueue[:]: # if the queue contains current client and got assignned to train on the label it has exhausted, remove the client from queue and add the target labels back to global training labels list
                         if (clientInQueue['assigned_client'] == current_client['assigned_client']) and (target in clientInQueue['target_to_train']):
                             for targetToIncludeBackOcc in range(clientInQueue['target_to_train'].count(target)):
-                                targets.insert(random.randint(0, len(targets)), target)
+                                SLS.insert(random.randint(0, len(SLS)), target)
                                 # targetsReassign += 1
                                 print(f'target no train: {target}')
                             newClientTargetToTrain = [t for t in clientInQueue['target_to_train'] if t != target]
@@ -406,12 +431,12 @@ async def start_federated_learning():
                             else:
                                 clientInQueue['target_to_train'] = newClientTargetToTrain
                     
-                # re-update probabilistic selected clients list for next window labels because there is changes in selected clients for the current window targets and the main clients available targets dictionary
+                # re-update probabilistic selected clients list for next window labels because there is changes in selected clients for the current window placeholders and the main clients available placeholders dictionary
                 probSelectedClientsAvailForSort_forEachTarget = updateProbabilisticSelectedClientsLists(windowTargets_selectedClients, windowTargets, clientsAvailPlaceholderTargets)
 
             if target_data_noTrain: 
-                for targetToIncludeBack in target_data_noTrain: # add targets not train back to the targets list random position
-                    targets.insert(random.randint(0, len(targets)), targetToIncludeBack) 
+                for targetToIncludeBack in target_data_noTrain: # add placeholders not train back to the SLS list at random position
+                    SLS.insert(random.randint(0, len(SLS)), targetToIncludeBack) 
                     # targetsReassign += 1
 
         et = time.time()
