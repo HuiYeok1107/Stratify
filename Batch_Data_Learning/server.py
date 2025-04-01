@@ -81,7 +81,7 @@ def generate_SLS(globalCounts):
     return SLS
 
 
-def weighted_client_selection(SLS, globalCounts, clientsAvailPlaceholderTargets):
+def generate_weightedSelectedClients_list(SLS, globalCounts, clientsAvailPlaceholderTargets):
     # Generate N number of client address for each client based on its normalized proportion for each placeholder
     clientAssignedForPlaceholder = {} 
     for client, placeholderProp in clientsAvailPlaceholderTargets.items():
@@ -107,6 +107,16 @@ def weighted_client_selection(SLS, globalCounts, clientsAvailPlaceholderTargets)
     
     return mappedClientAssignedForPlaceholder
 
+
+def get_currentClientsAvail_byPlaceholder(clientsAvailPlaceholderTargets):
+    clientsAvailForEachPlaceh = {}
+    for client, label_propo_tuple in clientsAvailPlaceholderTargets.items():
+        for label, propo in label_propo_tuple: # when uniform client selection is enabled, the propo weight is set as 1.0 for all labels of clients (refer to HE code)
+            if label not in clientsAvailForEachPlaceh:
+                clientsAvailForEachPlaceh[label] = []
+            clientsAvailForEachPlaceh[label].append((client, propo)) 
+    return clientsAvailForEachPlaceh
+    
 
 @app.get('/get_glb_params')
 async def get_glb_params():
@@ -382,7 +392,7 @@ def computePlaceholders(clients, serialz_clients_enc_info):
         globalCounts[placeholder] = clientDecrypted_placeholderSum
 
 
-    # uniform client selection: set client label proportion weight as 1.0; weighted selection: compute the normalized label proportion for each client label
+    # uniform client selection: set label proportion weight as 1.0 for all client labels; weighted selection: compute the normalized label proportion for each client label
     for client, items in clientsAvailPlaceholderTargets.items():
         noises = {}
         clientAvailPlaceholderTarget = {}
@@ -490,31 +500,38 @@ async def start_federated_learning(basePort):
     for epoch in range(1, epochs+1):
         torch.cuda.empty_cache()
         SLS = generate_SLS(globalCounts)
-        
-        targets, mappedClientAssignedForPlaceholder = init(globalCounts, clientsAvailPlaceholderTargets) 
+        if args.uniformClientSelection == 0:
+            mappedClientAssignedForPlaceholder = generate_weightedSelectedClients_list(SLS, globalCounts, clientsAvailPlaceholderTargets)
+        # targets, mappedClientAssignedForPlaceholder = init(globalCounts, clientsAvailPlaceholderTargets) 
 
+        clientsAvailForEachP = get_currentClientsAvail_byPlaceholder(clientsAvailPlaceholderTargets)
+        
         await send_prepareTrainData_request(clients)
         
         start_time = datetime.now()
-
+        
         while len(SLS) != 0:
             placeholderBatch = SLS[0: batchSize] # extract placeholders from list based on the defined batch size
             SLS = SLS[batchSize:]
 
             clientsBatch = mappedClientAssignedForPlaceholder[0:batchSize] # extract the assigned clients for the current batch of placeholders
-            totalAssignedClientsInBatch = len(set(clientsBatch))
             mappedClientAssignedForPlaceholder = mappedClientAssignedForPlaceholder[batchSize:]
 
             clientsPlaceholdersBatch = {client: [] for client in set(clientsBatch)}
             for client, placeholderToTrain in zip(clientsBatch, placeholderBatch):
                 clientsPlaceholdersBatch[client].append(placeholderToTrain)
-
+                
+            totalAssignedClientsInBatch = len(set(clientsBatch))
+            
             get_all_batchNormLayers()
+            
             serialz_glb_model_params = pickle.dumps(glb_model.state_dict())
 
+            
             # get the average grads by summing up all the summed gradients of clients and then divide by batch size
             accumulated_grads = await send_localTrain_request(serialz_glb_model_params, len(placeholderBatch), clientsPlaceholdersBatch)
             avg_grads = [torch.sum(torch.stack(grads), dim=0)/len(placeholderBatch) for grads in list(zip(*accumulated_grads))]
+            
             # update global model with the average grads
             optimizer.zero_grad()
             for param, avg_grad in zip(glb_model.parameters(), avg_grads):
