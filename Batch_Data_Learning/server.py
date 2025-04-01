@@ -121,7 +121,7 @@ def get_currentClientsAvail_byPlaceholder(clientsAvailPlaceholderTargets):
 
 def client_selection(placeholders, availClientsByP):
     placeholderCounts = Counter(placeholders)
-    selectedClients = {placeholder: random.choices(list(zip(*availClientsByP[placeholder]))[0], weights=list(zip(*availClientsByP[placeholder]))[1], k=count) for placeholder, count in placeholderCounts.items()} 
+    selectedClients = {placeholder: random.choices(list(zip(*availClientsByP[placeholder]))[0], weights=list(zip(*availClientsByP[placeholder]))[1], k=count) for placeholder, count in placeholderCounts.items()} # uniform selection: weights are 1.0 for all clients; weighted selection: weights are normalised proportions computed in HE
     
     mappedSelectedClients = []
     for p in placeholders:
@@ -532,8 +532,8 @@ async def start_federated_learning(basePort):
     for epoch in range(1, epochs+1):
         torch.cuda.empty_cache()
         SLS = generate_SLS(globalCounts)
-        if args.uniformClientSelection == 0:
-            mappedClientAssignedForPlaceholder = generate_weightedSelectedClients_list(SLS, globalCounts, clientsAvailPlaceholderTargets)
+        # if args.uniformClientSelection == 0:
+        #     mappedClientAssignedForPlaceholder = generate_weightedSelectedClients_list(SLS, globalCounts, clientsAvailPlaceholderTargets)
 
         clientsAvailForEachP = get_currentClientsAvail_byPlaceholder(clientsAvailPlaceholderTargets)
         
@@ -545,12 +545,13 @@ async def start_federated_learning(basePort):
             placeholderBatch = SLS[0: batchSize] # extract placeholders from list based on the defined batch size
             SLS = SLS[batchSize:]
             
-            if args.uniformClientSelection == 0:
-                clientsBatch = mappedClientAssignedForPlaceholder[0:batchSize] # extract the assigned clients for the current batch of placeholders
-                mappedClientAssignedForPlaceholder = mappedClientAssignedForPlaceholder[batchSize:]
-            else:
-                clientsBatch = client_selection(placeholderBatch, clientsAvailForEachP)
-                
+            # if args.uniformClientSelection == 0:
+            #     clientsBatch = mappedClientAssignedForPlaceholder[0:batchSize] # extract the assigned clients for the current batch of placeholders
+            #     mappedClientAssignedForPlaceholder = mappedClientAssignedForPlaceholder[batchSize:]
+            # else:
+            #     clientsBatch = client_selection(placeholderBatch, clientsAvailForEachP)
+            
+            clientsBatch = client_selection(placeholderBatch, clientsAvailForEachP)    
             clientsPlaceholdersBatch = {client: [] for client in set(clientsBatch)}
             for client, placeholderToTrain in zip(clientsBatch, placeholderBatch):
                 clientsPlaceholdersBatch[client].append(placeholderToTrain)
@@ -571,7 +572,8 @@ async def start_federated_learning(basePort):
                         clientsPlaceholdersBatch[client].append(placeholderToTrain)
                 else:
                     break
-            
+
+            awaitToStartTrainClients = set(awaitToStartTrainClients)
             totalAssignedClientsInBatch = len(awaitToStartTrainClients)
          
             # signal all awaiting selected clients to start local training and get the average grads by summing up all the summed gradients of clients and then divide by batch size
