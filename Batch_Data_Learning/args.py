@@ -7,6 +7,9 @@ def args_parser():
     parser.add_argument('--dirichlet', default=0, type=float, help="Enable Dirichlet partition. 1: Yes 0: No.")
     parser.add_argument('--client_num', default=5, type=int, help="Number of FL clients participate.")
 
+    parser.add_argument('--uniform_SLS', default=0, type=int, help="Enable uniform SLS. 1: Yes 0: No.")
+    parser.add_argument('--uniformClientSelection', default=1, type=int, help="Enable uniform client selection. 1: Yes 0: No.")
+
     parser.add_argument('--epochs', default=30, type=int, help="Number of communication rounds or training epochs.")
     parser.add_argument('--augmentation', default=0, type=int, help="Enable train data augmentation. 1: Yes 0: No.")
     parser.add_argument('--batch_size', default=128, type=int, help="Batch size per iteration for batch learning.")
