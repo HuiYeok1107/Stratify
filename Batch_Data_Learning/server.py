@@ -72,20 +72,23 @@ def set_cpu_affinity(core_ids):
     print(f"Process {pid} is now bound to cores: {core_ids}")
 
 
-def init(sums, clientsAvailPlaceholderTargets):
+def generate_SLS(globalCounts):
     # Generate N length Placeholder list based on the global count for each placeholder obtained through homomorphic encryption process  
-    targets = []
-    for placeholder, count in sums.items():
-        targets.extend([placeholder] * round(count))
-    random.shuffle(targets)    
+    SLS = []
+    for placeholder, count in globalCounts.items():
+        SLS.extend([placeholder] * round(count))
+    random.shuffle(SLS)   
+    return SLS
 
-    # Generate N number of client ID for each client based on its normalized proportion for each placeholder
+
+def weighted_client_selection(SLS, globalCounts, clientsAvailPlaceholderTargets):
+    # Generate N number of client address for each client based on its normalized proportion for each placeholder
     clientAssignedForPlaceholder = {} 
     for client, placeholderProp in clientsAvailPlaceholderTargets.items():
         for placeholder, prop in placeholderProp:
             if placeholder not in clientAssignedForPlaceholder:
                 clientAssignedForPlaceholder[placeholder] = []
-            clientAssignedForPlaceholder[placeholder].extend([client] * (int(round(sums[placeholder]) * prop)))
+            clientAssignedForPlaceholder[placeholder].extend([client] * (int(round(globalCounts[placeholder]) * prop)))
         
     for placeholder in clientAssignedForPlaceholder:
         random.shuffle(clientAssignedForPlaceholder[placeholder])
@@ -93,16 +96,16 @@ def init(sums, clientsAvailPlaceholderTargets):
     # Map the assigned client for each placeholder in Placeholder list
     mappedClientAssignedForPlaceholder = []
     targetsI_toremove = []
-    for i, target in enumerate(targets):
+    for i, target in enumerate(SLS):
         if clientAssignedForPlaceholder[target]:
             mappedClientAssignedForPlaceholder.append(clientAssignedForPlaceholder[target].pop(0))
         else:
             targetsI_toremove.append(i)
     
     for index in sorted(targetsI_toremove, reverse=True):
-        del targets[index]
+        del SLS[index]
     
-    return targets, mappedClientAssignedForPlaceholder
+    return mappedClientAssignedForPlaceholder
 
 
 @app.get('/get_glb_params')
@@ -358,33 +361,34 @@ def computePlaceholders(clients, serialz_clients_enc_info):
 
 
     # global counts
-    sums = {}
+    globalCounts = {}
     for client, items in clientsAvailPlaceholderTargets.items():
         for placeholder, placeholderAmt in items:
-            if placeholder not in sums:
-                sums[placeholder] = 0
-            sums[placeholder] = sums[placeholder] + placeholderAmt
+            if placeholder not in globalCounts:
+                globalCounts[placeholder] = 0
+            globalCounts[placeholder] = globalCounts[placeholder] + placeholderAmt
 
     noises = {}
-    for placeholder, encPlaceholderSum in sums.items():
+    for placeholder, encPlaceholderSum in globalCounts.items():
         # server adds random value to encrypted global count, serialized sum vector and send to client for decryption 
         noise = random.randint(126, 5234)
         noises[placeholder] = noise
-        sums[placeholder] = (encPlaceholderSum + noise).serialize()
+        globalCounts[placeholder] = (encPlaceholderSum + noise).serialize()
 
-    res = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(sums), 'mapping_stage': 'False'})
+    res = requests.post(f'http://127.0.0.1:{basePort + random.choice(clients)}/decryptIntermediateComparisonResult', files={'enc_comparison_val': pickle.dumps(globalCounts), 'mapping_stage': 'False'})
     res = pickle.loads(res.content)
     for placeholder, placeholderGlobalSum in res.items():
         clientDecrypted_placeholderSum = placeholderGlobalSum[0] - noises[placeholder]
-        sums[placeholder] = clientDecrypted_placeholderSum
+        globalCounts[placeholder] = clientDecrypted_placeholderSum
 
 
-    # calculate the normalized label proportion for each client label
+    # uniform client selection: set client label proportion weight as 1.0; weighted selection: compute the normalized label proportion for each client label
     for client, items in clientsAvailPlaceholderTargets.items():
         noises = {}
         clientAvailPlaceholderTarget = {}
+        # if else statement here
         for i, (placeholder, placeholderAmt) in enumerate(items):
-            inverseTotal = 1 / sums[placeholder]
+            inverseTotal = 1 / globalCounts[placeholder]
             noise = random.random()
             noises[placeholder] = noise
             encNormalizedLabelProp = ((placeholderAmt * inverseTotal) + noise).serialize() # Normalize by dividing by the sum
@@ -394,7 +398,7 @@ def computePlaceholders(clients, serialz_clients_enc_info):
         for i, (placeholder, noisyPlaceholderAmtProp) in enumerate(clientDecrypted_normalizedLabelProp.items()):
             clientsAvailPlaceholderTargets[client][i] = (placeholder, noisyPlaceholderAmtProp[0] - noises[placeholder])  # Assign decrypted normalized value back
 
-    return sums, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget
+    return globalCounts, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget
     
 
 def send_PlaceholderMapToRealLabel(client, mapping):
@@ -463,7 +467,7 @@ async def start_federated_learning(basePort):
         results = list(executor.map(lambda client: pickle.loads(requests.post(f'http://127.0.0.1:{basePort + int(client)}/encryptLabels').content), clients))
     serialz_clients_enc_info.extend(results)
         
-    sums, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget = computePlaceholders(clients, serialz_clients_enc_info) 
+    globalCounts, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget = computePlaceholders(clients, serialz_clients_enc_info) 
     
     for client, mapping in clientsPlaceholderTargetMapEncRealTarget.items():    
         send_PlaceholderMapToRealLabel(client, mapping) 
@@ -478,22 +482,24 @@ async def start_federated_learning(basePort):
     
     if args.lr_scheduler == 1:
         print('lr scheduler on')
-        lr_schedl = torch.optim.lr_scheduler.OneCycleLR(optimizer, lr, epochs=epochs, steps_per_epoch=math.ceil(round(sum([count for placeholder, count in sums.items()])) / batchSize))
+        lr_schedl = torch.optim.lr_scheduler.OneCycleLR(optimizer, lr, epochs=epochs, steps_per_epoch=math.ceil(round(sum([count for placeholder, count in globalCounts.items()])) / batchSize))
     
     resultFilePath = args.resultFilePath
     start_time = datetime.now()
 
     for epoch in range(1, epochs+1):
         torch.cuda.empty_cache()
-        targets, mappedClientAssignedForPlaceholder = init(sums, clientsAvailPlaceholderTargets) 
+        SLS = generate_SLS(globalCounts)
+        
+        targets, mappedClientAssignedForPlaceholder = init(globalCounts, clientsAvailPlaceholderTargets) 
 
         await send_prepareTrainData_request(clients)
         
         start_time = datetime.now()
 
-        while len(targets) != 0:
-            placeholderBatch = targets[0: batchSize] # extract placeholders from list based on the defined batch size
-            targets = targets[batchSize:]
+        while len(SLS) != 0:
+            placeholderBatch = SLS[0: batchSize] # extract placeholders from list based on the defined batch size
+            SLS = SLS[batchSize:]
 
             clientsBatch = mappedClientAssignedForPlaceholder[0:batchSize] # extract the assigned clients for the current batch of placeholders
             totalAssignedClientsInBatch = len(set(clientsBatch))
