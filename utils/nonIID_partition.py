@@ -75,7 +75,7 @@ def assignClientLabel(total_labels, label_per_client, total_clients):
     labels = list(range(0, total_labels))
     labels_c = labels.copy() # to ensure each label appears at least once among clients
     random.shuffle(labels_c)
-    split = round(len(labels_c) / total_clients)
+    split = max(1, round(len(labels_c) / total_clients))
     
     clientsNonIIDLabels = []
     label_distribution = {label: 0 for label in labels}  # Track overall label counts
