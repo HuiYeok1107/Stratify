@@ -76,14 +76,13 @@ def assignClientLabel(total_labels, label_per_client, total_clients):
     labels_c = labels.copy() # to ensure each label appears at least once among clients
     random.shuffle(labels_c)
     split = max(1, round(len(labels_c) / total_clients))
-    
+    dominant_labels = random.sample(labels, k=random.randint(1, max(1, total_labels // 2)))  # Random dominant labels for client
     clientsNonIIDLabels = []
     label_distribution = {label: 0 for label in labels}  # Track overall label counts
 
     for i in range(0, total_clients):
         nonIIDLabels = []
         clientFlag = True
-        dominant_labels = random.sample(labels, k=random.randint(1, max(1, total_labels // 2)))  # Random dominant labels for client
     
         while len(nonIIDLabels) < label_per_client:    
             # Replenish the labels if they run out
