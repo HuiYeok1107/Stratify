@@ -1,7 +1,11 @@
-# Stratify
-This repository contains the implementation of the algorithms proposed in the paper:  
-**"Stratify: Rethinking Federated Learning for Non-IID Data through Balanced Sampling"** by []  
-📄 [Paper Link](#) 
+# Stratify Official Site
+Released on February 20, 2025
+
+This repository contains the official implementation of the algorithms proposed in the paper:  
+**"Stratify: Rethinking Federated Learning for Non-IID Data through Balanced Sampling"**  
+
+📄 [Paper Link](https://arxiv.org/abs/2504.13462) 
+
 
 ## Installation
 ```bash
