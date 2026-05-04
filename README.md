@@ -67,3 +67,25 @@ For a complete list of training hyperparameters specific to each dataset, please
    python Single_Sample_Learning/server.py --dataset 'mnist' --labelOrDomainPerClientHold 5 --client_num 3 --epochs 1 --batch_size 1 --optimizer 'adam'
    ```
 
+   ## Citation
+
+```bibtex
+@article{HY2026,
+  title={Stratify: Rethinking Federated Learning for Non-IID Data through Balanced Sampling},
+  author={Wong, Hui Yeok and Lim, Chee Kau and Chan, Chee Seng},
+  journal={Pattern Recognition},
+  pages={Accepted},
+  year={2026},
+  publisher={Elsevier}
+}
+```
+
+## Feedback
+Suggestions and opinions on this work are greatly welcomed. Please contact the authors by sending an email to
+`limck at um.edu.my` or `cs.chan at um.edu.my`.
+
+## License and Copyright
+The project is open source under BSD-3 license (see the ``` LICENSE ``` file). 
+
+&#169;2026 Universiti Malaya.
+
