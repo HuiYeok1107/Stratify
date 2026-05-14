@@ -4,7 +4,7 @@ Released on May 04, 2026
 This repository contains the official implementation of the algorithms proposed in the paper:  
 **"Stratify: Rethinking Federated Learning for Non-IID Data through Balanced Sampling"**  
 
-📄 [Paper Link](https://arxiv.org/abs/2504.13462) 
+📄 [Paper Link](https://www.sciencedirect.com/science/article/abs/pii/S0031320326008654) 
 
 
 ## Installation
