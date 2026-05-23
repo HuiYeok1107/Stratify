@@ -20,17 +20,23 @@ import pickle
 from collections import Counter
 from itertools import islice
 import signal
-import logging 
 import time
 import os
 import sys
-
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils.data import dataset_train_test, dataset_transform, datasets_labels_count
 from utils.nonIID_partition import *
 import utils.model
 from utils.model import batch_learning_model, setBatchSize
 from utils.model_metrics import model_performance
+
+import logging 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] (PID %(process)d) - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger(__name__)
 
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -101,7 +107,6 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         placeh_mapping_stage = placeh_mapping_stage.decode() 
         # set comparison value as 0 or 1 during placeholder mapping stage to avoid malicious server from using the minus result to infer the real label a client holds
         if placeh_mapping_stage in ['s1', 's2']:
-            print(placeh_mapping_stage)
             intermediateCompVals = pickle.loads(await enc_comparison_val.read())
             if placeh_mapping_stage == 's1':
                 intermediateRes = {}
@@ -128,15 +133,15 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
         global context, PlaceholderMaptoRealTarget
         serialized_mapping = pickle.loads(await mapping.read())
         PlaceholderMaptoRealTarget = {placeholder: round(ts.ckks_vector_from(context, encRealLabel).decrypt()[0]) for placeholder, encRealLabel in serialized_mapping.items()}
-        print(f'port {port} placeholderMapReal: {PlaceholderMaptoRealTarget}')
+        logger.info(f'port {port} placeholderMapReal: {PlaceholderMaptoRealTarget}')
         return {'message': "received placeholder to real label maps"}
     
 
     @app.post('/prepareTrainData')
     async def prepare_trainData():
         clientData_copy = clientTrainData.copy()
-        clientData_copy['image'] = clientData_copy['image'].apply(lambda img: dataset_transform[args.dataset](img, train=True, augment=True if args.augmentation == 1 else False))
         if args.dataset in ['mnist', 'cifar10', 'cifar100', 'tinyimagenet', 'pacs', 'digitdg']:
+            clientData_copy['image'] = clientData_copy['image'].apply(lambda img: dataset_transform[args.dataset](img, train=True, augment=True if args.augmentation == 1 else False))
             for label in clientData_copy['label'].unique():
                 trainDataByLabels[label] = iter(clientData_copy.loc[clientData_copy['label'] == label, ['image', 'label']].sample(frac=1, replace=False).itertuples(index=False, name=None))
         else:
@@ -164,10 +169,10 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
 
         if args.dataset in ['mnist', 'cifar10', 'cifar100', 'tinyimagenet', 'pacs', 'digitdg']:
             inputs = torch.stack(testData['image'].tolist()).float()
-            labels = torch.tensor(testData['label'].values)
+            labels = torch.tensor(testData['label'].values).long()
         else:
-            inputs = torch.from_numpy(testData.drop(columns=['labels']).values).float()
-            labels = torch.from_numpy(testData['labels'].values).long()
+            inputs = torch.from_numpy(testData.drop(columns=['label']).values).float()
+            labels = torch.from_numpy(testData['label'].values).long()
 
         test_loader = DataLoader(TensorDataset(inputs, labels), batch_size=128, shuffle=False)
         with torch.no_grad():
@@ -279,16 +284,16 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
 
 
 def start_training_process(base_port, rank, port, clientTrainData, clientTestData, clientTrainLabelDataCount):
-    print(f"port: {port}, unique labels: {clientTrainData['label'].unique()}, {clientTrainLabelDataCount}")
-    print(f"Process {rank} started. Running Flask app on port {port}")
-    print(f'process id: {os.getpid()}, {os.getppid()}')
+    logger.info(f"port: {port}, unique labels: {clientTrainData['label'].unique()}, {clientTrainLabelDataCount}")
+    logger.info(f"Process {rank} started. Running Flask app on port {port}")
+    logger.info(f'process id: {os.getpid()}, {os.getppid()}')
     # set_cpu_affinity(cpu_aff_c)
     pid = os.getpid()
     process = psutil.Process(pid)
     current_affinity = process.cpu_affinity()
     process.cpu_affinity(current_affinity[rank:rank+1]) # [rank:rank+1] in hpc
 
-    print(os.system('taskset -cp %s' %os.getpid()))
+    # print(os.system('taskset -cp %s' %os.getpid()))
     create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, clientTrainLabelDataCount)
 
 
@@ -327,8 +332,8 @@ if __name__ == "__main__":
             clients_traindf, clientsTrainLabelDataCount = dirichlet_nonIID_label_partition(train_df, dirProp, num_clients=total_clients)
             clients_testdf, clientsTestDataCount = dirichlet_nonIID_label_partition(test_df, dirProp, num_clients=total_clients)
         
-    print(clientsTrainLabelDataCount)
-    print(clientsTestDataCount)
+    logger.info(f"Train Label Data Count: {clientsTrainLabelDataCount}")
+    logger.info(f"Test Label Data Count: {clientsTestDataCount}")
     mp.set_start_method('spawn', force=True)    
 
     # Spawn multiple processes, each with its own Flask app

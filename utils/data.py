@@ -47,6 +47,7 @@ def get_cifar10_df():
     data = tfds.load('cifar10', split='train')
     traindf = tfds.as_dataframe(data)
     # traindf = traindf.sample(frac=0.1)
+
     data = tfds.load('cifar10', split='test')
     testdf = tfds.as_dataframe(data)
     
@@ -70,6 +71,7 @@ def transform_cifar10(img, train=False, augment=False):
 def get_cifar100_df():
     data = tfds.load('cifar100', split='train')
     traindf = tfds.as_dataframe(data)
+    traindf = traindf.sample(frac=0.1)
     
     data = tfds.load('cifar100', split='test')
     testdf = tfds.as_dataframe(data)
@@ -93,8 +95,8 @@ def transform_cifar100(img, train=False, augment=False):
     
 def get_tinyImageNet_df():
     ds = load_dataset("zh-plus/tiny-imagenet", trust_remote_code=True) #cache_dir="/scr/user/huiyeok/datasets"
-    traindf = ds['train'].to_pandas()
-    testdf = ds['valid'].to_pandas()
+    traindf = ds['train'].to_pandas() #.sample(n=5000)
+    testdf = ds['valid'].to_pandas() #.sample(n=5000)
     
     return traindf, testdf, 200
 
@@ -122,11 +124,11 @@ def transform_tinyImageNet(img, train=False, augment=False):
     
 def get_covtype_df():
     testDataFrac = 0.2
-    traindf = pd.read_csv("./dataset/covtype.csv")
-    traindf = traindf.loc[traindf['Cover_Type'].isin([1, 2]), :]
+    traindf = pd.read_csv("https://raw.githubusercontent.com/jeffheaton/data/master/covtype.csv")
+    traindf = traindf.loc[traindf['cover_type'].isin([1, 2]), :]
     label_mapping = {1: 0, 2: 1}
-    traindf['Cover_Type'] = traindf['Cover_Type'].map(label_mapping)
-    traindf = traindf.rename(columns={'Cover_Type': "label"})
+    traindf['cover_type'] = traindf['cover_type'].map(label_mapping)
+    traindf = traindf.rename(columns={'cover_type': "label"})
     
     testdf = traindf.sample(frac=testDataFrac, replace=False, random_state=1)
     traindf = traindf.drop(testdf.index)
@@ -136,19 +138,20 @@ def get_covtype_df():
     
 def get_pacs_df():
     import deeplake
-    if os.path.exists(f"Fed-GT/utils/dataset/pacsTrain.pkl") and os.path.exists("Fed-GT/utils/dataset/pacsTest.pkl") :
-        traindf = pd.read_pickle("Fed-GT/utils/dataset/pacsTrain.pkl")
-        testdf = pd.read_pickle("Fed-GT/utils/dataset/pacsTest.pkl")
+    if os.path.exists(f"utils/data/pacsTrain.pkl") and os.path.exists("utils/data/pacsTest.pkl") :
+        traindf = pd.read_pickle("utils/data/pacsTrain.pkl")
+        # traindf = traindf.sample(frac=0.2)
+        testdf = pd.read_pickle("utils/data/pacsTest.pkl")
     else:
         dataset = deeplake.load("hub://activeloop/pacs-train")
         dataloader = dataset.tensorflow()
         traindf = pd.DataFrame(list(dataloader.as_numpy_iterator()))
-        traindf.to_pickle("Fed-GT/utils/dataset/pacsTrain.pkl")
+        traindf.to_pickle("utils/data/pacsTrain.pkl")
 
         dataset = deeplake.load("hub://activeloop/pacs-test")
         dataloader = dataset.tensorflow()
         testdf = pd.DataFrame(list(dataloader.as_numpy_iterator()))
-        testdf.to_pickle("Fed-GT/utils/dataset/pacsTest.pkl")
+        testdf.to_pickle("utils/data/pacsTest.pkl")
         del dataset, dataloader
     
     traindf = traindf.rename(columns={"images": "image", "labels": "label", "domains": "domain"})
@@ -175,12 +178,12 @@ def transform_pacs(img, train=False, augment=False):
     
     
 def get_digitDG_df():
-    if not os.path.exists(f"Fed-GT/utils/dataset/digits_dg"):
+    if not os.path.exists(f"utils/data/digits_dg"):
         gdown.download("https://drive.google.com/uc?id=15V7EsHfCcfbKgsDmzQKj_DfXt_XYp_P7", "digits_dg.zip", quiet=False)
         with zipfile.ZipFile('digits_dg.zip', "r") as zip_ref:
             zip_ref.extractall("Fed-GT/utils/dataset")
     
-    data_dir = 'Fed-GT/utils/dataset/digits_dg'
+    data_dir = 'utils/data/digits_dg'
     # Load the dataset
     mnist_dataset = datasets.ImageFolder(root=f'{data_dir}/mnist/train')
     svhn_dataset = datasets.ImageFolder(root=f'{data_dir}/svhn/train')
@@ -239,7 +242,6 @@ def transform_digitDG(img, train=False, augment=False):
     transformed_img = transform(img)
     return transformed_img
         
-
 
 datasets_labels_count = {
     "mnist": 10,

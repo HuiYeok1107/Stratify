@@ -14,7 +14,6 @@ import tenseal as ts
 import torch
 import torch.optim as optim
 import numpy as np
-
 import os
 import sys
 import pickle
@@ -23,10 +22,16 @@ import math
 import signal
 import itertools 
 import string
+from collections import Counter
 from datetime import datetime
 import psutil
 import logging 
-
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] (PID %(process)d) - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger(__name__)
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import utils.model
 from utils.model import batch_learning_model
@@ -285,7 +290,6 @@ def computePlaceholders(clients, serialz_clients_enc_info):
     remaining_clients_enc_info = [subl for subl in clients_enc_info if subl != client_with_max_labels]
 
     for client_enc_info in remaining_clients_enc_info:
-        print(len(uniqueList))
         pairwise_enc_results = {}
         client_enc_labels = [encItem[0] for encItem in client_enc_info]
         for i, client_enc_label in enumerate(client_enc_labels):
@@ -471,8 +475,14 @@ async def start_local_train(clients, serialz_glb_model_params, currentBatchSize)
             for client in clients
         ]
         responses = await asyncio.gather(*tasks)
-        clients_summed_gradients = [pickle.loads(response.content) for response in responses]
-    
+
+        clients_summed_gradients = []
+        for response in responses:
+            buffer = io.BytesIO(response.content)
+            grad = torch.load(buffer, weights_only=False) 
+            clients_summed_gradients.append(grad)
+            buffer.close()
+
     return clients_summed_gradients
 
 
@@ -524,7 +534,7 @@ async def start_federated_learning(basePort):
         pass
     
     if args.lr_scheduler == 1:
-        print('lr scheduler on')
+        logger.info('lr scheduler on')
         lr_schedl = torch.optim.lr_scheduler.OneCycleLR(optimizer, lr, epochs=epochs, steps_per_epoch=math.ceil(round(sum([count for placeholder, count in globalCounts.items()])) / batchSize))
     
     resultFilePath = args.resultFilePath
@@ -631,8 +641,6 @@ async def begin():
     process = psutil.Process(pid)
     current_affinity = process.cpu_affinity()
     process.cpu_affinity(current_affinity[args.client_num:]) 
-
-    print(os.system('taskset -cp %s' %os.getpid())) 
     
     configs = uvicorn.Config(app, port=basePort)
     server = uvicorn.Server(configs)

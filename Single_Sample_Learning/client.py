@@ -65,8 +65,8 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
     @app.post('/prepareTrainData')
     async def prepare_trainData():
         clientData_copy = clientTrainData.copy()
-        clientData_copy['image'] = clientData_copy['image'].apply(lambda img: dataset_transform[args.dataset](img, train=True, augment=True if args.augmentation == 1 else False))
         if args.dataset in ['mnist', 'cifar10', 'cifar100', 'tinyimagenet', 'pacs', 'digitdg']:
+            clientData_copy['image'] = clientData_copy['image'].apply(lambda img: dataset_transform[args.dataset](img, train=True, augment=True if args.augmentation == 1 else False))
             for label in clientData_copy['label'].unique():
                 trainDataByLabels[label] = iter(clientData_copy.loc[clientData_copy['label'] == label, ['image', 'label']].sample(frac=1, replace=False).itertuples(index=False, name=None))
         else:
@@ -184,10 +184,10 @@ def create_fastapi_app(base_port, rank, port, clientTrainData, clientTestData, c
 
         if args.dataset in ['mnist', 'cifar10', 'cifar100', 'tinyimagenet', 'pacs', 'digitdg']:
             inputs = torch.stack(testData['image'].tolist()).float()
-            labels = torch.tensor(testData['label'].values)
+            labels = torch.tensor(testData['label'].values).long()
         else:
-            inputs = torch.from_numpy(testData.drop(columns=['labels']).values).float()
-            labels = torch.from_numpy(testData['labels'].values).long()
+            inputs = torch.from_numpy(testData.drop(columns=['label']).values).float()
+            labels = torch.from_numpy(testData['label'].values).long()
 
         test_loader = DataLoader(TensorDataset(inputs, labels), batch_size=128, shuffle=False)
         with torch.no_grad():

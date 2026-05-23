@@ -31,6 +31,7 @@ import numpy as np
 import tenseal as ts
 context = None 
 import time
+import copy
 
 basePort = args.start_port
 glb_model = single_sample_learning_model[args.dataset]
@@ -142,6 +143,7 @@ def groupConsecutiveClients(windowTargets_selectedClients, windowTargets):
 
 def updateProbabilisticSelectedClientsLists(windowTargets_selectedClients, windowTargets, clientsAvailPlaceholderTargets):
     clientsAvailForSort_forEachTarget = getCurrentClientsAvailByPlaceholder(clientsAvailPlaceholderTargets) # get all the current clients available for each placeholder
+    print(f'clientsAvailPlaceholderTargets: {clientsAvailPlaceholderTargets}')
     for clientAssigned, windowTarget in list(zip(windowTargets_selectedClients, windowTargets)):  # if a client already got assigned to train on a target label in the current window, exclude this client from client assignment process for the same placeholder in the upcoming window
         if (clientAssigned in list(zip(*clientsAvailForSort_forEachTarget[windowTarget]))[0]) and (len(clientsAvailForSort_forEachTarget[windowTarget]) != 1):
             clientsAvailForSort_forEachTarget[windowTarget] = [client_amt_tuple for client_amt_tuple in clientsAvailForSort_forEachTarget[windowTarget] if client_amt_tuple[0] != clientAssigned]
@@ -362,14 +364,14 @@ async def start_federated_learning():
         results = list(executor.map(lambda client: pickle.loads(requests.post(f'http://127.0.0.1:{basePort + int(client)}/encryptLabels').content), clients))
     serialz_clients_enc_info.extend(results)
 
-    globalCounts, clientsAvailPlaceholderTargets, clientsPlaceholderTargetMapEncRealTarget = computePlaceholders(clients, serialz_clients_enc_info)
+    globalCounts, clientsAvailPlaceholderTargetsMasterList, clientsPlaceholderTargetMapEncRealTarget = computePlaceholders(clients, serialz_clients_enc_info)
     for client, mapping in clientsPlaceholderTargetMapEncRealTarget.items():    
         send_PlaceholderMapToRealLabel(client, mapping) 
 
     st = time.time()
     for epoch in range(1, epochs+1):
         SLS = generate_SLS(globalCounts)
-        clientsAvailPlaceholderTargets, consecutiveClientsInQueue = initVars(clientsAvailPlaceholderTargets)
+        clientsAvailPlaceholderTargets, consecutiveClientsInQueue = initVars(copy.deepcopy(clientsAvailPlaceholderTargetsMasterList)) #initVars(clientsAvailPlaceholderTargets)
         probSelectedClientsAvailForSort_forEachTarget = getCurrentClientsAvailByPlaceholder(clientsAvailPlaceholderTargets)  # all clients are considered for probabilistic selection at first iteration
         firstClient = True
 
@@ -381,7 +383,7 @@ async def start_federated_learning():
             # continously monitor the assigned clients in queue, whenever there are less than 2 clients in queue, assign clients for the next window placeholders to train so that the last client in current window knows which next client to send the parameters to
             if (len(SLS)!=0) and (len(consecutiveClientsInQueue) <= 2):
                 while (len(consecutiveClientsInQueue) <= 2):
-                    windowTargets = SLS[0:30] # extract the labels subset from global training labels list
+                    windowTargets = SLS[0:30] # extract the labels subset from global training labels list (chunkLength)
                     SLS = SLS[30:] # update global training labels list
                     
                     sortedClients_forEachWindowTarget = sortClients(windowTargets, clientsAvailPlaceholderTargets, probSelectedClientsAvailForSort_forEachTarget) # assign the suitable client to train on a target in such a way that minimize model parameters passing 
@@ -413,11 +415,10 @@ async def start_federated_learning():
             res = await send_localTrain_request(current_client['assigned_client'], current_client['target_to_train'], current_client['next_assigned_client'])
             target_to_remove = res['target exhausted']
             target_data_noTrain = res['target no train']
-
-
+            
             if target_to_remove:
                 for target in target_to_remove:
-                    clientsAvailPlaceholderTargets[current_client['assigned_client']] = [placeholderPropTuple for placeholderPropTuple in clientsAvailPlaceholderTargets[current_client['assigned_client']] if placeholderPropTuple[0] != target]
+                    clientsAvailPlaceholderTargets[current_client['assigned_client']] = [placeholderPropTuple for placeholderPropTuple in clientsAvailPlaceholderTargets[current_client['assigned_client']] if placeholderPropTuple[0] != target] #**
                     
                     for clientInQueue in consecutiveClientsInQueue[:]: # if the queue contains current client and got assignned to train on the label it has exhausted, remove the client from queue and add the target labels back to global training labels list
                         if (clientInQueue['assigned_client'] == current_client['assigned_client']) and (target in clientInQueue['target_to_train']):
@@ -425,11 +426,11 @@ async def start_federated_learning():
                                 SLS.insert(random.randint(0, len(SLS)), target)
                                 # targetsReassign += 1
                                 print(f'target no train: {target}')
-                            newClientTargetToTrain = [t for t in clientInQueue['target_to_train'] if t != target]
-                            if len(newClientTargetToTrain) == 0:
+                            currentClientTargetToTrain = [t for t in clientInQueue['target_to_train'] if t != target] # update current client list of target_to_train, remove client if list is empty after updated
+                            if len(currentClientTargetToTrain) == 0:
                                 consecutiveClientsInQueue.remove(clientInQueue) 
                             else:
-                                clientInQueue['target_to_train'] = newClientTargetToTrain
+                                clientInQueue['target_to_train'] = currentClientTargetToTrain
                     
                 # re-update probabilistic selected clients list for next window labels because there is changes in selected clients for the current window placeholders and the main clients available placeholders dictionary
                 probSelectedClientsAvailForSort_forEachTarget = updateProbabilisticSelectedClientsLists(windowTargets_selectedClients, windowTargets, clientsAvailPlaceholderTargets)
