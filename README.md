@@ -13,6 +13,10 @@ This repository contains the official implementation of the algorithms proposed 
 git clone https://github.com/huiyeok1107/Stratify.git
 cd Statify
 
+# Install Python
+sudo apt install python3.10
+sudo apt install python3.10-venv
+
 # Create a virtual environment 
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
