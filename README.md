@@ -93,7 +93,7 @@ Suggestions and opinions on this work are greatly welcomed. Please contact the a
 `limck at um.edu.my` or `cs.chan at um.edu.my`.
 
 ## License and Copyright
-The project is open source under BSD-3 license (see the ``` LICENSE ``` file). 
+The project is open source under BSD-3 license (see the [LICENSE](LICENSE) file). 
 
 &#169;2026 Universiti Malaya.
 
