@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 import gdown
 import zipfile
-import pickle
 import io
 import os
 import tensorflow as tf
@@ -180,8 +179,8 @@ def transform_pacs(img, train=False, augment=False):
 def get_digitDG_df():
     if not os.path.exists(f"utils/data/digits_dg"):
         gdown.download("https://drive.google.com/uc?id=15V7EsHfCcfbKgsDmzQKj_DfXt_XYp_P7", "digits_dg.zip", quiet=False)
-        with zipfile.ZipFile('digits_dg.zip', "r") as zip_ref:
-            zip_ref.extractall("Fed-GT/utils/dataset")
+        with zipfile.ZipFile('utils/data/digits_dg.zip', "r") as zip_ref:
+            zip_ref.extractall("utils/data")
     
     data_dir = 'utils/data/digits_dg'
     # Load the dataset
