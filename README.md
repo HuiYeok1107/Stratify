@@ -19,7 +19,7 @@ sudo apt install python3.10-venv
 
 # Create a virtual environment 
 python -m venv stratify-env
-source stratify-env/bin/activate  # On Windows: venv\Scripts\activate
+source stratify-env/bin/activate  # On Windows: stratify-env\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
