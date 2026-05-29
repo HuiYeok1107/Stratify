@@ -1,10 +1,13 @@
 # Stratify Official Site
+
+Updated on May 29, 2026 (Paper uploaded)
+
 Released on May 04, 2026
 
 This repository contains the official implementation of the algorithms proposed in the paper:  
 **"Stratify: Rethinking Federated Learning for Non-IID Data through Balanced Sampling"**  
 
-📄 [Paper Link](stratify.pdf) 
+📄 [Paper in PDF](stratify.pdf) 
 
 
 ## Installation
