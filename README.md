@@ -4,7 +4,7 @@ Released on May 04, 2026
 This repository contains the official implementation of the algorithms proposed in the paper:  
 **"Stratify: Rethinking Federated Learning for Non-IID Data through Balanced Sampling"**  
 
-📄 [Paper Link](https://www.sciencedirect.com/science/article/abs/pii/S0031320326008654) 
+📄 [Paper Link](stratify.pdf) 
 
 
 ## Installation
@@ -79,12 +79,14 @@ Below are the command-line arguments you can use to customize the training proce
 
 ```bibtex
 @article{HY2026,
-  title={Stratify: Rethinking Federated Learning for Non-IID Data through Balanced Sampling},
-  author={Wong, Hui Yeok and Lim, Chee Kau and Chan, Chee Seng},
-  journal={Pattern Recognition},
-  pages={Accepted},
-  year={2026},
-  publisher={Elsevier}
+title = {Stratify: Rethinking federated learning for non-IID data through balanced sampling},
+journal = {Pattern Recognition},
+volume = {180},
+pages = {113900},
+year = {2026},
+issn = {0031-3203},
+doi = {https://doi.org/10.1016/j.patcog.2026.113900},
+author = {Hui Yeok Wong and Chee Kau Lim and Chee Seng Chan}
 }
 ```
 
