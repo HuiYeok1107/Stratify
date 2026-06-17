@@ -1,14 +1,13 @@
 # Stratify Official Site
 
+This repository contains the official implementation of the algorithms proposed in the paper:  
+> [ 📄 ](stratify.pdf)  **"Stratify: Rethinking Federated Learning for Non-IID Data through Balanced Sampling"**
+
+> Pattern Recognition (PR), vol. 180, pp. 113900, 2026
+
 Updated on May 29, 2026 (Paper uploaded)
 
 Released on May 04, 2026
-
-This repository contains the official implementation of the algorithms proposed in the paper:  
-**"Stratify: Rethinking Federated Learning for Non-IID Data through Balanced Sampling"**  
-
-📄 [Paper in PDF](stratify.pdf) 
-
 
 ## Installation
 ```bash
